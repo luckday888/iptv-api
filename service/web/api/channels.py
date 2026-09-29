@@ -1,6 +1,154 @@
-from flask import Blueprint
+from flask import Blueprint, jsonify, request
+
+from service.web.auth.decorators import admin_required
+from utils import channel_repository as repo
+from utils.constants import channel_results_path
+
+
+def _page_args():
+    # 分页参数归一化：页码最小 1，单页上限 200
+    page = max(1, request.args.get("page", 1, type=int))
+    page_size = min(200, max(1, request.args.get("page_size", 50, type=int)))
+    return page, page_size
 
 
 def build_channels_blueprint():
-    # 频道管理蓝图骨架，具体路由在后续任务追加
-    return Blueprint("admin_channels", __name__, url_prefix="/api/admin/channels")
+    bp = Blueprint("admin_channels", __name__, url_prefix="/api/admin/channels")
+
+    @bp.get("/categories")
+    @admin_required
+    def categories():
+        # 分类侧栏数据，支持名称模糊搜索
+        return jsonify(
+            repo.list_categories(
+                channel_results_path, request.args.get("search", "", type=str)
+            )
+        )
+
+    @bp.get("")
+    @admin_required
+    def list_all():
+        # 频道分页列表，支持按分类、健康状态与名称过滤
+        page, page_size = _page_args()
+        rows = repo.list_channels(
+            channel_results_path,
+            category=request.args.get("category") or None,
+            health=request.args.get("health") or None,
+            search=request.args.get("search", "", type=str),
+        )
+        total = len(rows)
+        start = (page - 1) * page_size
+        return jsonify(
+            {
+                "items": rows[start : start + page_size],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+
+    @bp.post("")
+    @admin_required
+    def create_channel():
+        # 手动新增频道，默认归入“自定义”分类
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        category = (body.get("category") or "自定义").strip()
+        if not name:
+            return jsonify({"error": "频道名不能为空"}), 400
+        key = repo.upsert_manual_channel(channel_results_path, category, name)
+        return jsonify({"channel_key": key})
+
+    @bp.delete("")
+    @admin_required
+    def remove_channels():
+        # 批量删除频道及其关联数据
+        keys = (request.get_json(silent=True) or {}).get("channel_keys", [])
+        if not isinstance(keys, list) or not keys:
+            return jsonify({"error": "未选择频道"}), 400
+        deleted = repo.delete_channel_records(channel_results_path, keys)
+        return jsonify({"deleted": deleted})
+
+    @bp.get("/<channel_key>")
+    @admin_required
+    def channel_detail(channel_key):
+        # 单个频道详情，不存在时返回 404
+        row = repo.get_channel(channel_results_path, channel_key)
+        if row is None:
+            return jsonify({"error": "频道不存在"}), 404
+        return jsonify(row)
+
+    @bp.get("/<channel_key>/results")
+    @admin_required
+    def channel_results(channel_key):
+        # 频道的全部接口结果，频道不存在时返回 404
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
+        return jsonify(repo.list_channel_results(channel_results_path, channel_key))
+
+    @bp.post("/<channel_key>/results")
+    @admin_required
+    def add_result(channel_key):
+        # 为指定频道手动新增接口结果
+        body = request.get_json(silent=True) or {}
+        url = (body.get("url") or "").strip()
+        if not url:
+            return jsonify({"error": "URL 不能为空"}), 400
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
+        result_key = repo.add_manual_result(channel_results_path, channel_key, url)
+        return jsonify({"result_key": result_key})
+
+    @bp.delete("/<channel_key>/results")
+    @admin_required
+    def remove_results(channel_key):
+        # 批量删除指定频道下的接口结果
+        keys = (request.get_json(silent=True) or {}).get("result_keys", [])
+        if not isinstance(keys, list):
+            return jsonify({"error": "result_keys 必须是数组"}), 400
+        deleted = repo.delete_channel_results(
+            channel_results_path, channel_key, keys
+        )
+        return jsonify({"deleted": deleted})
+
+    @bp.put("/<channel_key>/selection")
+    @admin_required
+    def update_selection(channel_key):
+        # 设置手动输出选择，入参为按 rank 排序的 result_keys
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
+        keys = (request.get_json(silent=True) or {}).get("result_keys")
+        if not isinstance(keys, list):
+            return jsonify({"error": "result_keys 必须是数组"}), 400
+        rows = repo.list_channel_results(channel_results_path, channel_key)
+        by_key = {row["result_key"]: row for row in rows}
+        selected = [
+            {"url": by_key[key]["url"], "headers": by_key[key].get("headers")}
+            for key in keys
+            if key in by_key
+        ]
+        repo.set_channel_selection(
+            channel_results_path, channel_key, selected, mode="manual"
+        )
+        return jsonify({"ok": True})
+
+    @bp.post("/<channel_key>/selection/reset")
+    @admin_required
+    def reset_selection(channel_key):
+        # 清除手动选择并重置为自动选择
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
+        repo.reset_channel_selection(channel_results_path, channel_key)
+        return jsonify({"ok": True})
+
+    @bp.put("/<channel_key>/logo")
+    @admin_required
+    def update_logo(channel_key):
+        # 设置频道台标（URL 或上传后的路径）
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
+        logo = (request.get_json(silent=True) or {}).get("logo", "")
+        repo.set_channel_logo(channel_results_path, channel_key, logo)
+        return jsonify({"ok": True})
+
+    return bp
