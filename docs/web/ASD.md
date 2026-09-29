@@ -1,6 +1,6 @@
 # IPTV-API Web 管理端 API 接口文档（ASD）
 
-版本：v1.0
+版本：v1.1
 日期：2026-09-29
 配套文档：[PRD.md](PRD.md)、[SAD.md](SAD.md)、[DDD.md](DDD.md)
 
@@ -29,7 +29,7 @@
 | 200 | 成功 |
 | 400 | 参数/校验失败 |
 | 401 | 未登录/会话失效 |
-| 403 | 禁止（如只读项写入） |
+| 403 | 禁止（如管理密码未初始化时登录） |
 | 404 | 资源不存在 |
 | 409 | 状态冲突（如已有更新任务运行） |
 | 429 | 请求过频（登录失败限流） |
@@ -41,6 +41,13 @@
 { "items": [], "total": 0, "page": 1, "page_size": 50 }
 ```
 
+### 1.6 v1 范围边界
+以下 ASD 中规划的接口 v1 未实现（相关段落已标注），列入后续迭代：
+频道导入/导出、白名单/黑名单快捷 POST、订阅源文件导入/导出、模板分类管理系列、日志打包导出、系统诊断包、RTMP 播放地址查询。
+
+### 1.7 管理密码初始化
+首次启动若 `admin_password` 为空（且未通过环境变量注入），后端自动生成随机密码并写入用户配置文件，启动日志打印一次明文提示；密码未初始化期间登录返回 403。
+
 ---
 
 ## 2. 认证（auth）
@@ -49,7 +56,8 @@
 登录。
 - Body：`{"password": "xxx"}`
 - 200：`{"username": "admin", "expires_at": 173...}` 并 Set-Cookie；
-- 401：`{"error": "密码错误"}`；429：失败过频。
+- 401：`{"error": "密码错误"}`；429：失败过频；403：管理密码未初始化。
+- 限流维度为 `X-Real-IP`（无该头时回退直连对端地址）。
 
 ### POST /api/admin/auth/logout
 退出登录，清除会话。200：`{"ok": true}`。
@@ -237,7 +245,7 @@
 - Body：`{"logo": "url 或 上传后路径"}`；上传可走 `multipart/form-data`。
 - 200：`{"ok": true}`。
 
-### 5.8 名单
+### 5.8 名单（v1 未纳入）
 #### POST /api/admin/channels/{channel_key}/results/{result_key}/whitelist
 加入白名单。
 - Body：`{"url": "...", "name": "..."}`
@@ -248,7 +256,7 @@
 - Body：`{"url": "..."}`
 - 200：`{"ok": true}`。
 
-### 5.9 导入导出
+### 5.9 导入导出（v1 未纳入）
 #### POST /api/admin/channels/import
 上传本地源文件（txt/m3u）解析导入。
 - 请求：`multipart/form-data`，字段 `file`；
@@ -285,15 +293,15 @@
 - 200：`{"ok": true, "path": "..."}`；
 - 400：校验/序列化失败，返回错误定位。
 
-### POST /api/admin/sources/{kind}/import
+### POST /api/admin/sources/{kind}/import（v1 未纳入）
 上传文件替换/合并。
 - 请求：`multipart/form-data`，字段 `file`，`merge`（true|false）
 - 200：`{"ok": true}`。
 
-### GET /api/admin/sources/{kind}/export
+### GET /api/admin/sources/{kind}/export（v1 未纳入）
 下载当前源文件。
 
-### 模板分类（仅 kind=template）
+### 模板分类（v1 未纳入，仅 kind=template）
 #### GET /api/admin/sources/template/categories
 模板分类侧栏：
 ```json
@@ -345,7 +353,7 @@ RTMP 运行时快照（约 2s 轮询）。
 
 > 说明：现有接口 `POST /api/rtmp/streams/<id>/<action>` 保持不变供本机服务用；Web 端用上述批量接口，后端做鉴权封装。
 
-### GET /api/admin/rtmp/stream-url/{channel_key}
+### GET /api/admin/rtmp/stream-url/{channel_key}（v1 未纳入）
 获取某频道转推/播放地址。200：`{"url": "rtmp://..."}`。
 
 ---
@@ -366,7 +374,7 @@ RTMP 运行时快照（约 2s 轮询）。
 ### DELETE /api/admin/logs/{kind}
 清空该日志文件。200：`{"ok": true}`。
 
-### GET /api/admin/logs/export
+### GET /api/admin/logs/export（v1 未纳入）
 打包导出全部日志为 zip 下载。
 
 ---
@@ -390,7 +398,7 @@ RTMP 运行时快照（约 2s 轮询）。
 }
 ```
 
-### GET /api/admin/diagnostics
+### GET /api/admin/diagnostics（v1 未纳入）
 导出系统诊断包为 zip 下载。
 
 ---
@@ -398,12 +406,12 @@ RTMP 运行时快照（约 2s 轮询）。
 ## 10. 设置（settings）
 
 ### GET /api/admin/settings
-返回全部配置项及元数据。
+返回全部配置项及元数据（不含 `admin_password`，密码变更走 [PUT /api/admin/auth/password](#put-apiadminauthpassword)）。
 ```json
 {
   "items": [
-    {"key": "open_update", "value": "True", "kind": "bool",
-     "description": "是否开启自动更新", "options": [],
+    {"key": "open_update", "value": "True", "kind": "boolean",
+     "description": "", "options": [],
      "advanced": false, "read_only": false,
      "env_name": null}
   ]
@@ -414,8 +422,8 @@ RTMP 运行时快照（约 2s 轮询）。
 批量保存配置。
 - Body：`{"items": [{"key": "open_update", "value": "False"}, ...]}`
 - 200：`{"ok": true}`；
-- 400：校验失败，`details` 给出每项错误；
-- 403：含只读/环境变量覆盖项被修改。
+- 400：校验失败或含只读/环境变量锁定项，`details` 给出每项错误；
+- 任何内存写入前先完成全量预校验，全部通过后才落盘，失败时回滚内存改动。
 
 ---
 
@@ -429,7 +437,7 @@ RTMP 运行时快照（约 2s 轮询）。
 ```
 
 ### GET /api/admin/about/update-check
-检查新版本（后端请求 GitHub Releases，失败返回兜底）。
+检查新版本。v1 为离线占位实现（不发起外部请求，返回当前版本兜底），在线检查列入后续迭代。
 ```json
 {"has_update": false, "latest": "3.0.0", "current": "3.0.0",
  "release_url": "...", "checked_at": 173...}
