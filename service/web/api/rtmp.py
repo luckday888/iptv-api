@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 
 from service.web.auth.decorators import admin_required
 from utils import channel_repository as repo
@@ -17,6 +17,8 @@ def build_rtmp_blueprint():
         try:
             return jsonify(fetch_rtmp_snapshot())
         except Exception as exc:  # RTMP 服务不可用
+            # 兜底前先记录完整异常堆栈，便于排查服务不可用原因
+            current_app.logger.exception("获取 RTMP 运行时快照失败")
             return jsonify({
                 "available": False,
                 "status": "unavailable",
@@ -53,12 +55,23 @@ def build_rtmp_blueprint():
         # 延迟导入，避免 import service.rtmp 在模块加载时产生额外副作用
         from service import rtmp as rtmp_service
 
+        # 转推目标：本机 RTMP 服务的 hls 应用
+        host = f"{rtmp_service.app_rtmp_url}/hls"
         success, errors = 0, []
         for key in keys:
             try:
                 if action in ("start", "restart"):
-                    # host 传 None：转推目标为本机 RTMP 服务
-                    rtmp_service.start_hls_to_rtmp_async(None, key)
+                    if action == "restart":
+                        # restart 先停掉旧转推，再走与 start 相同的启动流程
+                        rtmp_service.stop_stream(key)
+                    # service 以返回值（而非异常）表达容量不足/参数非法等结果，必须检查 accepted
+                    result = rtmp_service.start_hls_to_rtmp_async(host, key)
+                    if not result.get("accepted"):
+                        errors.append({
+                            "channel_key": key,
+                            "message": result.get("status", "unknown"),
+                        })
+                        continue
                 else:
                     rtmp_service.stop_stream(key)
                 success += 1
