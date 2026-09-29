@@ -1,0 +1,61 @@
+# Web 管理端前后端容器分离部署：网关(nginx-rtmp + 前端) 与 后端(gunicorn + 更新任务)
+# 先构建镜像：docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
+# 启动：docker compose -f docker-compose.web-admin-split.yml up -d
+services:
+  backend:
+    image: iptv-api:web-admin
+    container_name: iptv-backend
+    restart: unless-stopped
+    networks: [iptv-net]
+    volumes:
+      - ./config:/iptv-api/config
+      - ./output:/iptv-api/output
+    environment:
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      PUBLIC_URL: "${PUBLIC_URL:-}"
+    # 不启动 nginx，只跑更新任务与 gunicorn；绑 0.0.0.0 供网关访问
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for file in /iptv-api-config/*; do
+          name=$$(basename "$$file")
+          [ -e "$$APP_WORKDIR/config/$$name" ] || cp -r "$$file" "$$APP_WORKDIR/config/$$name"
+        done
+        . $$APP_WORKDIR/.venv/bin/activate
+        export IPTV_API_PLAIN_OUTPUT=1
+        # 启动业务进程前完成管理密码初始化落盘，避免与 gunicorn 读到不同值
+        python -c "from utils.config import config"
+        python -u $$APP_WORKDIR/main.py &
+        exec env IPTV_API_SKIP_VERSION_CHECK=1 python -u -m gunicorn \
+          service.app:app -b 0.0.0.0:$$APP_PORT --workers=1 --timeout=1000
+
+  gateway:
+    image: iptv-api:web-admin
+    container_name: iptv-gateway
+    restart: unless-stopped
+    networks: [iptv-net]
+    depends_on: [backend]
+    ports:
+      - "${PORT:-80}:8080"
+      - "1935:1935"
+    environment:
+      APP_PORT: "5180"
+      NGINX_HTTP_PORT: "8080"
+      NGINX_RTMP_PORT: "1935"
+    # 生成 nginx 配置后，将回环上游替换为 backend 容器，再以前台方式运行
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        sed -e "s/\$${APP_PORT}/$$APP_PORT/g" \
+            -e "s/\$${NGINX_HTTP_PORT}/$$NGINX_HTTP_PORT/g" \
+            -e "s/\$${NGINX_RTMP_PORT}/$$NGINX_RTMP_PORT/g" \
+            -e "s|\$${IPV6_HTTP_LISTEN}||g" \
+            /etc/nginx/nginx.conf.template > /tmp/nginx.conf
+        sed -i "s|http://127.0.0.1:$$APP_PORT|http://backend:$$APP_PORT|g" /tmp/nginx.conf
+        exec nginx -c /tmp/nginx.conf -g 'daemon off;'
+
+networks:
+  iptv-net:
+    driver: bridge

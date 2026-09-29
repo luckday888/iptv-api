@@ -18,7 +18,7 @@
 | `builder` | python:3.14-alpine | Python venv、编译安装带 rtmp 模块的 nginx |
 | runtime（最终镜像） | python:3.14-alpine | venv + nginx + 前端 dist + 业务代码 |
 
-一个容器内运行三个进程（见 [entrypoint.sh](../../entrypoint.sh)）：
+一个容器内运行三个进程（见 [entrypoint.web-admin.sh](../../entrypoint.web-admin.sh)；上游原版 `entrypoint.sh` 保持不变）：
 
 - **nginx**（监听 8080/1935）：托管管理端静态文件、反向代理管理 API、提供订阅接口入口、RTMP 转推、HLS、/stat 统计；
 - **gunicorn**（监听 127.0.0.1:5180，sync 单 worker）：Flask 应用，提供订阅接口与 `/api/admin/*` 管理 API；
@@ -191,6 +191,8 @@ docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
 例：`[Settings]` 段的 `open_update` 可用 `OPEN_UPDATE=false` 覆盖。
 被环境变量覆盖的配置项在管理端「设置」页标记为只读，避免界面值与环境值冲突。
 
+> 空或纯空白的环境变量视为**未设置**，不会清空配置文件中已有的值——因此 compose 中 `ADMIN_PASSWORD` 留空时，已落盘的管理密码继续有效。
+
 ### 5.3 管理密码初始化策略
 
 - 若设置了 `ADMIN_PASSWORD`：使用该密码；
@@ -230,7 +232,7 @@ docker logs iptv-api 2>&1 | grep 初始化
 
 ## 7. 手动双容器部署（不改代码）
 
-适用于部署规范要求"网关/前端"与"后端"容器分离的场景。两个容器使用**同一镜像**，通过覆盖启动命令实现分工：网关容器只跑 nginx，后端容器只跑 main.py + gunicorn。
+适用于部署规范要求"网关/前端"与"后端"容器分离的场景。仓库已提供 [docker-compose.web-admin-split.yml](../../docker-compose.web-admin-split.yml)，两个容器使用**同一镜像**，通过覆盖启动命令实现分工：网关容器只跑 nginx，后端容器只跑 main.py + gunicorn。
 
 ### 7.1 拓扑
 
@@ -240,82 +242,29 @@ docker logs iptv-api 2>&1 | grep 初始化
                           ▼
                      iptv-backend (gunicorn:5180 + main.py)
                           │
-                     config/ output/ （共享挂载）
+                     config/ output/ （后端容器挂载）
 ```
 
-### 7.2 docker-compose 示例
-
-创建 `docker-compose.split.yml`：
-
-```yaml
-services:
-  backend:
-    image: iptv-api:web-admin
-    container_name: iptv-backend
-    restart: unless-stopped
-    networks: [iptv-net]
-    volumes:
-      - ./config:/iptv-api/config
-      - ./output:/iptv-api/output
-    environment:
-      ADMIN_PASSWORD: "请修改为强密码"
-      PUBLIC_URL: "http://192.168.1.10"
-    # 不启动 nginx，只跑更新任务与 gunicorn；绑 0.0.0.0 供网关访问
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        for file in /iptv-api-config/*; do
-          name=$$(basename "$$file")
-          [ -e "$$APP_WORKDIR/config/$$name" ] || cp -r "$$file" "$$APP_WORKDIR/config/$$name"
-        done
-        . $$APP_WORKDIR/.venv/bin/activate
-        export IPTV_API_PLAIN_OUTPUT=1
-        python -u $$APP_WORKDIR/main.py &
-        exec env IPTV_API_SKIP_VERSION_CHECK=1 python -u -m gunicorn \
-          service.app:app -b 0.0.0.0:$$APP_PORT --workers=1 --timeout=1000
-
-  gateway:
-    image: iptv-api:web-admin
-    container_name: iptv-gateway
-    restart: unless-stopped
-    networks: [iptv-net]
-    depends_on: [backend]
-    ports:
-      - "80:8080"
-      - "1935:1935"
-    environment:
-      APP_PORT: "5180"
-      NGINX_HTTP_PORT: "8080"
-      NGINX_RTMP_PORT: "1935"
-    # 生成 nginx 配置后，将回环上游替换为 backend 容器，再以前台方式运行
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        sed -e "s/\$${APP_PORT}/$$APP_PORT/g" \
-            -e "s/\$${NGINX_HTTP_PORT}/$$NGINX_HTTP_PORT/g" \
-            -e "s/\$${NGINX_RTMP_PORT}/$$NGINX_RTMP_PORT/g" \
-            -e "s|\$${IPV6_HTTP_LISTEN}||g" \
-            /etc/nginx/nginx.conf.template > /tmp/nginx.conf
-        sed -i "s|http://127.0.0.1:$$APP_PORT|http://backend:$$APP_PORT|g" /tmp/nginx.conf
-        exec nginx -c /tmp/nginx.conf -g 'daemon off;'
-
-networks:
-  iptv-net:
-    driver: bridge
-```
-
-启动：
+### 7.2 启动
 
 ```bash
-docker compose -f docker-compose.split.yml up -d
+# 构建镜像（与第 2 章相同）
+docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
+
+# 启动 / 停止 / 查看日志
+docker compose -f docker-compose.web-admin-split.yml up -d
+docker compose -f docker-compose.web-admin-split.yml down
+docker compose -f docker-compose.web-admin-split.yml logs -f
 ```
 
-> 注意事项：
-> - YAML 中 `$$` 为 compose 对 shell 变量的转义，直接照抄即可；
-> - 前端静态文件来自网关容器镜像内 `/usr/local/nginx/html/admin`，升级前端需更新网关容器镜像；
-> - RTMP 的 `on_done` 回调同样经 sed 指向后端容器，无需额外配置。
+可通过与第 2 章相同的环境变量控制：`ADMIN_PASSWORD`、`PORT`、`PUBLIC_URL`。
+
+### 7.3 说明
+
+- 前端静态文件来自网关容器镜像内 `/usr/local/nginx/html/admin`，升级时需用新镜像重建两个容器；
+- 网关经容器网络 `iptv-net` 直接反代后端 gunicorn，仅一层代理，登录限流仍按真实客户端 IP（`X-Real-IP`）分桶；
+- RTMP 的 `on_done` 回调与 HLS 播放列表代理由启动命令自动指向 `backend` 容器，无需额外配置；
+- `config/`、`output/` 只挂载在后端容器，HLS 切片产生于网关容器内存目录 `/tmp/hls`，不落盘。
 
 ---
 
