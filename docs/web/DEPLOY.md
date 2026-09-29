@@ -89,89 +89,57 @@ docker compose -f docker-compose.web-admin.yml logs -f
 
 ## 3. 纯后端模式（不启用 Web 管理端）
 
-仅运行「订阅源更新 + 订阅接口」，不启动 nginx。该模式下：
+直接使用**上游官方镜像**即可，无需使用 web-admin 镜像或覆盖启动命令。官方镜像包含订阅源更新、订阅接口、RTMP 转推、HLS、/stat 统计，仅缺少 Web 管理端：
 
-| 路径 | 行为（已实测） |
+| 路径 | 行为 |
 |---|---|
-| `/` 等订阅接口 | 200，由 gunicorn 直接提供 |
-| `/admin` | **404**，镜像内不含前端文件，Flask 不托管管理页面 |
-| `/api/admin/*` | 路由仍然注册，需登录密码；但没有前端页面，无法进行界面操作 |
-
-适用与限制：
-
-- 无 nginx → **无 RTMP 转推、HLS、/stat 统计**；需要 RTMP 的场景不能用此模式（见本章末）；
-- gunicorn 直接对外暴露端口，建议仅在内网使用，或前置外部 HTTPS 网关（参见 [第 8 章](#8-https-部署)）；
-- 如要求 `/api/admin/*` 也彻底不注册，需要新增环境变量开关，列入后续迭代。
+| `/` 等订阅接口 | 正常提供 |
+| `/hls`、`/stat` | RTMP 转推与统计正常可用 |
+| `/admin`、`/api/admin/*` | **404**，镜像中无相关代码与页面 |
 
 ### 3.1 docker run
 
 ```bash
-docker run -d \
-  --name iptv-backend-only \
-  --restart unless-stopped \
-  -p 5180:5180 \
-  -v /opt/iptv-api/config:/iptv-api/config \
-  -v /opt/iptv-api/output:/iptv-api/output \
-  --entrypoint /bin/sh \
-  iptv-api:web-admin -c '
-set -e
-# 首次启动补齐默认配置（已存在的文件不覆盖）
-for file in /iptv-api-config/*; do
-  name=$(basename "$file")
-  [ -e "$APP_WORKDIR/config/$name" ] || cp -r "$file" "$APP_WORKDIR/config/$name"
-done
-. $APP_WORKDIR/.venv/bin/activate
-export IPTV_API_PLAIN_OUTPUT=1
-# 订阅源更新任务
-python -u $APP_WORKDIR/main.py &
-# 订阅接口，绑 0.0.0.0 直接对外
-exec env IPTV_API_SKIP_VERSION_CHECK=1 python -u -m gunicorn \
-  service.app:app -b 0.0.0.0:$APP_PORT --workers=1 --timeout=1000
-'
-```
+docker pull guovern/iptv-api:latest
 
-访问订阅接口：`http://<宿主机IP>:5180/`。
+# 官方镜像拉取失败时可用代理加速地址（可能版本较旧）
+# docker pull docker.1ms.run/guovern/iptv-api:latest
+
+docker run -d \
+  --name iptv-api \
+  --restart unless-stopped \
+  -p 80:8080 \
+  guovern/iptv-api:latest
+```
 
 ### 3.2 docker compose
 
-```yaml
-services:
-  iptv-backend:
-    image: iptv-api:web-admin
-    container_name: iptv-backend
-    restart: unless-stopped
-    ports:
-      - "5180:5180"
-    volumes:
-      - ./config:/iptv-api/config
-      - ./output:/iptv-api/output
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        for file in /iptv-api-config/*; do
-          name=$$(basename "$$file")
-          [ -e "$$APP_WORKDIR/config/$$name" ] || cp -r "$$file" "$$APP_WORKDIR/config/$$name"
-        done
-        . $$APP_WORKDIR/.venv/bin/activate
-        export IPTV_API_PLAIN_OUTPUT=1
-        python -u $$APP_WORKDIR/main.py &
-        exec env IPTV_API_SKIP_VERSION_CHECK=1 python -u -m gunicorn \
-          service.app:app -b 0.0.0.0:$$APP_PORT --workers=1 --timeout=1000
+直接使用上游原版 `docker-compose.yml`：
+
+```bash
+docker compose up -d
+# 修改宿主机端口
+PORT=8088 docker compose up -d
 ```
 
-### 3.3 源码方式的纯后端
+### 3.3 用上游原版 Dockerfile 自行构建
 
-源码部署时不执行前端构建（或删除 `web_admin/dist`），Flask 即不托管 `/admin`，只运行：
+需要离线构建或基于上游代码定制时，使用仓库中已恢复原样的 `Dockerfile`：
+
+```bash
+docker build -f Dockerfile -t iptv-api:latest .
+```
+
+### 3.4 源码方式
+
+源码部署时不安装 Node、不执行前端构建，只运行后端两个进程：
 
 ```bash
 pipenv run dev       # 终端1：订阅源更新
 pipenv run service   # 终端2：订阅接口（默认 5180）
 ```
 
-### 3.4 需要 RTMP 但想关闭管理端？
-
-此组合当前**不支持配置开关**：RTMP 依赖 nginx，而 nginx 无条件托管镜像内的 `/admin` 页面（有登录密码保护）。如需该场景，需要新增环境变量开关并在 nginx 配置生成时跳过管理端 location，属于代码改动，可另行安排。
+> 需求是"保留 RTMP 但关闭管理端"的场景同样由上游官方镜像天然满足，无需任何开关。
 
 ---
 
