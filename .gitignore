@@ -9,3 +9,4 @@ tmp/
 .venv/
 .superpowers/
 docs/**/plans/
+config/user_config.ini
