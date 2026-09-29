@@ -24,7 +24,7 @@
 - **gunicorn**（监听 127.0.0.1:5180，sync 单 worker）：Flask 应用，提供订阅接口与 `/api/admin/*` 管理 API；
 - **main.py**：按配置执行订阅源更新任务。
 
-> 前端构建阶段与后端构建阶段互相独立，但**运行期在同一容器内**。如果部署规范要求前后端容器分离，参见 [第 6 章 手动双容器部署](#6-手动双容器部署不改代码)，无需修改仓库代码。
+> 前端构建阶段与后端构建阶段互相独立，但**运行期在同一容器内**。如果部署规范要求前后端容器分离，参见 [第 7 章 手动双容器部署](#7-手动双容器部署不改代码)，无需修改仓库代码。
 
 ### 1.2 端口
 
@@ -101,7 +101,95 @@ docker compose logs -f
 
 ---
 
-## 3. 自行构建镜像
+## 3. 纯后端模式（不启用 Web 管理端）
+
+仅运行「订阅源更新 + 订阅接口」，不启动 nginx。该模式下：
+
+| 路径 | 行为（已实测） |
+|---|---|
+| `/` 等订阅接口 | 200，由 gunicorn 直接提供 |
+| `/admin` | **404**，镜像内不含前端文件，Flask 不托管管理页面 |
+| `/api/admin/*` | 路由仍然注册，需登录密码；但没有前端页面，无法进行界面操作 |
+
+适用与限制：
+
+- 无 nginx → **无 RTMP 转推、HLS、/stat 统计**；需要 RTMP 的场景不能用此模式（见本章末）；
+- gunicorn 直接对外暴露端口，建议仅在内网使用，或前置外部 HTTPS 网关（参见 [第 8 章](#8-https-部署)）；
+- 如要求 `/api/admin/*` 也彻底不注册，需要新增环境变量开关，列入后续迭代。
+
+### 3.1 docker run
+
+```bash
+docker run -d \
+  --name iptv-backend-only \
+  --restart unless-stopped \
+  -p 5180:5180 \
+  -v /opt/iptv-api/config:/iptv-api/config \
+  -v /opt/iptv-api/output:/iptv-api/output \
+  --entrypoint /bin/sh \
+  iptv-api:web-admin -c '
+set -e
+# 首次启动补齐默认配置（已存在的文件不覆盖）
+for file in /iptv-api-config/*; do
+  name=$(basename "$file")
+  [ -e "$APP_WORKDIR/config/$name" ] || cp -r "$file" "$APP_WORKDIR/config/$name"
+done
+. $APP_WORKDIR/.venv/bin/activate
+export IPTV_API_PLAIN_OUTPUT=1
+# 订阅源更新任务
+python -u $APP_WORKDIR/main.py &
+# 订阅接口，绑 0.0.0.0 直接对外
+exec env IPTV_API_SKIP_VERSION_CHECK=1 python -u -m gunicorn \
+  service.app:app -b 0.0.0.0:$APP_PORT --workers=1 --timeout=1000
+'
+```
+
+访问订阅接口：`http://<宿主机IP>:5180/`。
+
+### 3.2 docker compose
+
+```yaml
+services:
+  iptv-backend:
+    image: iptv-api:web-admin
+    container_name: iptv-backend
+    restart: unless-stopped
+    ports:
+      - "5180:5180"
+    volumes:
+      - ./config:/iptv-api/config
+      - ./output:/iptv-api/output
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for file in /iptv-api-config/*; do
+          name=$$(basename "$$file")
+          [ -e "$$APP_WORKDIR/config/$$name" ] || cp -r "$$file" "$$APP_WORKDIR/config/$$name"
+        done
+        . $$APP_WORKDIR/.venv/bin/activate
+        export IPTV_API_PLAIN_OUTPUT=1
+        python -u $$APP_WORKDIR/main.py &
+        exec env IPTV_API_SKIP_VERSION_CHECK=1 python -u -m gunicorn \
+          service.app:app -b 0.0.0.0:$$APP_PORT --workers=1 --timeout=1000
+```
+
+### 3.3 源码方式的纯后端
+
+源码部署时不执行前端构建（或删除 `web_admin/dist`），Flask 即不托管 `/admin`，只运行：
+
+```bash
+pipenv run dev       # 终端1：订阅源更新
+pipenv run service   # 终端2：订阅接口（默认 5180）
+```
+
+### 3.4 需要 RTMP 但想关闭管理端？
+
+此组合当前**不支持配置开关**：RTMP 依赖 nginx，而 nginx 无条件托管镜像内的 `/admin` 页面（有登录密码保护）。如需该场景，需要新增环境变量开关并在 nginx 配置生成时跳过管理端 location，属于代码改动，可另行安排。
+
+---
+
+## 4. 自行构建镜像
 
 需要在安装了 Docker 的主机上执行（本项目规范要求 Docker 构建在远程构建主机完成）：
 
@@ -119,13 +207,13 @@ docker build -t iptv-api:web-admin .
 
 ---
 
-## 4. 环境变量说明
+## 5. 环境变量说明
 
-### 4.1 运行参数
+### 5.1 运行参数
 
 | 变量 | 说明 | 默认值 |
 |---|---|---|
-| `ADMIN_PASSWORD` | 管理端登录密码；首次设置后持久化到 `config/user_config.ini` | 空（触发首启随机密码，见 4.3） |
+| `ADMIN_PASSWORD` | 管理端登录密码；首次设置后持久化到 `config/user_config.ini` | 空（触发首启随机密码，见 5.3） |
 | `IPTV_ADMIN_SECRET` | 会话签名固定密钥；不设置时由管理密码派生（改密后旧会话自动失效） | 空 |
 | `ADMIN_SESSION_DAYS` | 会话有效期天数（1~90） | 7 |
 | `ADMIN_LOGIN_RATE_LIMIT` | 60 秒内同一 IP 最大登录失败次数（1~100） | 5 |
@@ -139,7 +227,7 @@ docker build -t iptv-api:web-admin .
 | `HTTP_PROXY` | 订阅源/EPG 抓取代理（不用于测速） | 空 |
 | `CDN_URL` | CDN 加速地址 | 空 |
 
-### 4.2 通用配置覆盖机制
+### 5.2 通用配置覆盖机制
 
 `config/config.ini` 中的**任意配置项**都可以通过环境变量覆盖，查找顺序：
 
@@ -150,7 +238,7 @@ docker build -t iptv-api:web-admin .
 例：`[Settings]` 段的 `open_update` 可用 `OPEN_UPDATE=false` 覆盖。
 被环境变量覆盖的配置项在管理端「设置」页标记为只读，避免界面值与环境值冲突。
 
-### 4.3 管理密码初始化策略
+### 5.3 管理密码初始化策略
 
 - 若设置了 `ADMIN_PASSWORD`：使用该密码；
 - 若未设置且 `config/user_config.ini` 中无密码：**首次启动自动生成随机密码**，写入用户配置文件，并在启动日志中明文打印一次（`[初始化]` 开头）；
@@ -165,15 +253,15 @@ docker logs iptv-api 2>&1 | grep 初始化
 
 ---
 
-## 5. 数据持久化与配置
+## 6. 数据持久化与配置
 
-### 5.1 挂载要点
+### 6.1 挂载要点
 
 - 首次启动时，镜像内默认配置会自动补齐到挂载的空 `config/` 目录（已存在的文件不覆盖）；
 - 修改订阅源、名单、配置既可在管理端操作，也可直接编辑宿主机挂载目录中的文件；
 - 数据库（频道结果、RTMP 状态）位于 `output/data/`，删除该目录会丢失频道测试结果与操作历史。
 
-### 5.2 常用文件位置
+### 6.2 常用文件位置
 
 | 文件 | 路径（容器内） |
 |---|---|
@@ -187,11 +275,11 @@ docker logs iptv-api 2>&1 | grep 初始化
 
 ---
 
-## 6. 手动双容器部署（不改代码）
+## 7. 手动双容器部署（不改代码）
 
 适用于部署规范要求"网关/前端"与"后端"容器分离的场景。两个容器使用**同一镜像**，通过覆盖启动命令实现分工：网关容器只跑 nginx，后端容器只跑 main.py + gunicorn。
 
-### 6.1 拓扑
+### 7.1 拓扑
 
 ```
 宿主机 :80/:1935 ──→ iptv-gateway (nginx: 静态文件 + 反代 + RTMP)
@@ -202,7 +290,7 @@ docker logs iptv-api 2>&1 | grep 初始化
                      config/ output/ （共享挂载）
 ```
 
-### 6.2 docker-compose 示例
+### 7.2 docker-compose 示例
 
 创建 `docker-compose.split.yml`：
 
@@ -278,11 +366,11 @@ docker compose -f docker-compose.split.yml up -d
 
 ---
 
-## 7. HTTPS 部署
+## 8. HTTPS 部署
 
 推荐架构：外部 HTTPS 网关（nginx / Caddy / 云负载均衡）→ 本容器（HTTP 8080）。
 
-### 7.1 外部 nginx 反代示例
+### 8.1 外部 nginx 反代示例
 
 ```nginx
 server {
@@ -309,7 +397,7 @@ server {
 - 此时 `PUBLIC_URL=https://iptv.example.com`；
 - 管理端路径仍为 `/admin`，无需改动。
 
-### 7.2 Caddy 示例
+### 8.2 Caddy 示例
 
 ```
 iptv.example.com {
@@ -321,11 +409,11 @@ Caddy 自动签发证书并默认透传上述头信息。
 
 ---
 
-## 8. 源码部署（Linux / macOS）
+## 9. 源码部署（Linux / macOS）
 
 适用于不便使用 Docker 的环境。生产环境仍建议使用 Docker 镜像。
 
-### 8.1 系统依赖
+### 9.1 系统依赖
 
 | 依赖 | 版本 | 用途 |
 |---|---|---|
@@ -334,7 +422,7 @@ Caddy 自动签发证书并默认透传上述头信息。
 | FFmpeg | 任意较新版本 | 分辨率检测、截图 |
 | nginx（带 rtmp 模块） | 较新 | 仅在需要 RTMP 转推时必须；纯订阅/管理可用普通反代 |
 
-### 8.2 后端环境
+### 9.2 后端环境
 
 ```bash
 git clone <仓库地址> iptv-api
@@ -345,7 +433,7 @@ pip install pipenv
 PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy
 ```
 
-### 8.3 构建前端
+### 9.3 构建前端
 
 ```bash
 cd web_admin
@@ -361,7 +449,7 @@ cd web_admin
 npm run dev          # 监听 5181，自动代理 /api 到 127.0.0.1:5180
 ```
 
-### 8.4 启动进程
+### 9.4 启动进程
 
 需要两个常驻进程（与容器内一致）：
 
@@ -380,7 +468,7 @@ pipenv run service           # python service/app.py，监听 config.app_port（
   -b 127.0.0.1:5180 --workers=1 --timeout=1000
 ```
 
-### 8.5 systemd 托管（Linux 生产）
+### 9.5 systemd 托管（Linux 生产）
 
 `/etc/systemd/system/iptv-update.service`：
 
@@ -424,7 +512,7 @@ systemctl daemon-reload
 systemctl enable --now iptv-update iptv-web
 ```
 
-### 8.6 源码部署的前端托管
+### 9.6 源码部署的前端托管
 
 由系统 nginx 托管 `web_admin/dist` 并反代 API（参考配置，按需调整；RTMP/HLS 配置可参照仓库 [nginx.conf.template](../../nginx.conf.template)）：
 
@@ -455,7 +543,7 @@ server {
 
 > 注意：源码部署时 `register_web` 以进程工作目录（cwd）下的 `web_admin/dist` 定位静态文件，需保证工作目录为项目根目录。
 
-### 8.7 Windows / macOS 桌面端
+### 9.7 Windows / macOS 桌面端
 
 如需原 PySide6 桌面界面：
 
@@ -466,9 +554,9 @@ pipenv run ui_build    # 打包桌面安装包
 
 ---
 
-## 9. 升级
+## 10. 升级
 
-### 9.1 镜像升级
+### 10.1 镜像升级
 
 ```bash
 docker pull <镜像仓库>:<标签>          # 或在构建主机重新 docker build
@@ -477,7 +565,7 @@ docker compose up -d                   # 使用新镜像重建容器
 
 `config/`、`output/` 在挂载卷中，升级不丢失；镜像内新增的默认配置项会自动补齐（已存在文件不覆盖）。
 
-### 9.2 源码升级
+### 10.2 源码升级
 
 ```bash
 git fetch && git checkout <目标版本>
@@ -488,9 +576,9 @@ sudo systemctl restart iptv-update iptv-web
 
 ---
 
-## 10. 验证与排障
+## 11. 验证与排障
 
-### 10.1 部署验证
+### 11.1 部署验证
 
 ```bash
 # 订阅接口（应返回播放列表内容）
@@ -505,7 +593,7 @@ curl -i http://127.0.0.1/api/admin/auth/session
 
 浏览器访问 `http://<宿主机IP>/admin`，应自动跳转登录页；使用部署时设置的密码（或首启随机密码）登录。
 
-### 10.2 常见问题
+### 11.2 常见问题
 
 | 现象 | 原因与处理 |
 |---|---|
@@ -518,7 +606,7 @@ curl -i http://127.0.0.1/api/admin/auth/session
 | RTMP 转推不可用 | 确认 1935 端口已映射、容器镜像为带 rtmp 模块版本；查看 `/stat` 与容器错误日志 |
 | 容器不停重启 | 查看 `docker logs iptv-api`；多为挂载目录权限或配置文件损坏，可临时移除挂载排查 |
 
-### 10.3 日志位置
+### 11.3 日志位置
 
 | 日志 | 位置 |
 |---|---|
