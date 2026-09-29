@@ -207,6 +207,20 @@ def test_selection_put_and_reset(temp_db):
     assert data == {"mode": "auto", "items": []}
 
 
+def test_selection_put_all_unknown_keys_rejected(temp_db):
+    # 提交的 result_keys 全部未知时，过滤后为空，必须返回 400 且不写入 manual 零输出
+    client = _client()
+    key = client.post(
+        "/api/admin/channels", json={"name": "无效选择频道"}
+    ).get_json()["channel_key"]
+    res = client.put(
+        f"/api/admin/channels/{key}/selection", json={"result_keys": ["bogus"]}
+    )
+    assert res.status_code == 400
+    detail = client.get(f"/api/admin/channels/{key}").get_json()
+    assert detail.get("selection_mode") == "auto"
+
+
 def test_selection_get_ranks_order(temp_db):
     # GET selection 必须按 selected_rank 升序返回已选接口
     client = _client()

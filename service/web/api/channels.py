@@ -143,6 +143,9 @@ def build_channels_blueprint():
             for key in keys
             if key in by_key
         ]
+        # 过滤未知 key 后为空时直接拒绝，避免频道进入 manual 零输出状态
+        if not selected:
+            return jsonify({"error": "至少选择一个有效接口"}), 400
         repo.set_channel_selection(
             channel_results_path, channel_key, selected, mode="manual"
         )
