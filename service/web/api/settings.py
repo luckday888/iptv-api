@@ -86,10 +86,12 @@ def build_settings_blueprint():
         if details:
             return jsonify({"error": "存在无法保存的配置", "details": details}), 400
 
-        # 写入前先快照各键原始字符串，供保存失败时回滚内存
+        # 写入前先快照各键原始字符串及是否存在，供保存失败时回滚内存
         original_values = {}
+        original_exists = {}
         for entry in items:
             key = entry["key"]
+            original_exists[key] = config.config.has_option(_SECTION, key)
             original_values[key] = config.config.get(_SECTION, key, fallback="")
 
         # 全量预校验：任一值非法即整体拒绝，保证内存零改动
@@ -115,7 +117,11 @@ def build_settings_blueprint():
             config.save()
         except Exception as exc:  # 校验失败时 config.save 抛出异常
             for key, value in original_values.items():
-                config.config.set(_SECTION, key, value)
+                # 原始缺失的键必须移除，写入空串会毒化内存（如布尔键读取报错）
+                if original_exists[key]:
+                    config.config.set(_SECTION, key, value)
+                else:
+                    config.config.remove_option(_SECTION, key)
             return jsonify({"error": str(exc), "details": {}}), 400
         return jsonify({"ok": True})
 

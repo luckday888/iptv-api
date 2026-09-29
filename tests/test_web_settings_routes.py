@@ -234,3 +234,66 @@ def test_save_failure_rolls_back_memory(monkeypatch):
     )
     assert res.status_code == 400
     assert settings_mod.config.config.get(_SECTION, "open_update") == original
+
+
+@pytest.fixture
+def missing_cache_key():
+    # 确保 open_use_cache 在配置中原始缺失，用例结束恢复其原状态避免污染
+    from service.web.api import settings as settings_mod
+
+    parser = settings_mod.config.config
+    existed = parser.has_option(_SECTION, "open_use_cache")
+    original = parser.get(_SECTION, "open_use_cache", fallback="")
+    parser.remove_option(_SECTION, "open_use_cache")
+    try:
+        yield
+    finally:
+        if existed:
+            parser.set(_SECTION, "open_use_cache", original)
+        else:
+            parser.remove_option(_SECTION, "open_use_cache")
+
+
+def test_save_failure_missing_key_not_poisoned(monkeypatch, missing_cache_key):
+    # 落盘失败回滚时，原始缺失的键必须移除，不能写入空串毒化内存
+    from service.web.api import settings as settings_mod
+
+    def _raise():
+        raise RuntimeError("磁盘不可写")
+
+    monkeypatch.setattr(settings_mod.config, "save", _raise)
+
+    assert settings_mod.config.config.has_option(_SECTION, "open_use_cache") is False
+    res = _client().put(
+        "/api/admin/settings",
+        json={"items": [{"key": "open_use_cache", "value": "True"}]},
+    )
+    assert res.status_code == 400
+    # 回滚后该键仍不存在，property 读取走 fallback 而非抛 ValueError
+    assert settings_mod.config.config.has_option(_SECTION, "open_use_cache") is False
+    assert settings_mod.config.open_use_cache is True
+
+
+def test_cross_field_conflict_rolls_back_batch(missing_cache_key):
+    # 跨字段校验失败（min_resolution > max_resolution）时，同批缺失键不残留、已有键恢复原值
+    from service.web.api import settings as settings_mod
+
+    parser = settings_mod.config.config
+    min_before = parser.get(_SECTION, "min_resolution")
+    max_before = parser.get(_SECTION, "max_resolution")
+
+    # 真实 save 会先执行 validate 并在落盘前抛错，无需打桩
+    res = _client().put(
+        "/api/admin/settings",
+        json={
+            "items": [
+                {"key": "open_use_cache", "value": "True"},
+                {"key": "min_resolution", "value": "3840x2160"},
+                {"key": "max_resolution", "value": "1280x720"},
+            ]
+        },
+    )
+    assert res.status_code == 400
+    assert parser.has_option(_SECTION, "open_use_cache") is False
+    assert parser.get(_SECTION, "min_resolution") == min_before
+    assert parser.get(_SECTION, "max_resolution") == max_before
