@@ -181,44 +181,66 @@ def build_channels_blueprint():
     def retest_channel(channel_key):
         if repo.get_channel(channel_results_path, channel_key) is None:
             return jsonify({"error": "频道不存在"}), 404
+        # 提交前预创建操作记录，响应即可携带 operation_id（ASD 5.4）
+        operation_id = repo.begin_operation(
+            channel_results_path, "retest_channel", "channel", channel_key
+        )
         operations = _operations()
         try:
             ops_manager.run(
                 "retest_channel",
-                lambda progress: operations.retest_channel(channel_key, progress),
+                lambda progress: operations.retest_channel(
+                    channel_key, progress, operation_id=operation_id
+                ),
             )
         except RuntimeError as exc:
+            # 未实际执行，回收预创建的操作记录，避免残留 running
+            repo.finish_operation(channel_results_path, operation_id, "cancelled")
             return jsonify({"error": str(exc)}), 409
-        return jsonify({"ok": True})
+        return jsonify({"operation_id": operation_id})
 
     @bp.post("/<channel_key>/results/retest")
     @admin_required
     def retest_results(channel_key):
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
         keys = (request.get_json(silent=True) or {}).get("result_keys", [])
+        operation_id = repo.begin_operation(
+            channel_results_path, "retest_results", "channel", channel_key
+        )
         operations = _operations()
         try:
             ops_manager.run(
                 "retest_results",
                 lambda progress: operations.retest_results(
-                    channel_key, keys, progress),
+                    channel_key, keys, progress, operation_id=operation_id
+                ),
             )
         except RuntimeError as exc:
+            repo.finish_operation(channel_results_path, operation_id, "cancelled")
             return jsonify({"error": str(exc)}), 409
-        return jsonify({"ok": True})
+        return jsonify({"operation_id": operation_id})
 
     @bp.post("/<channel_key>/results/screenshot")
     @admin_required
     def screenshot_results(channel_key):
+        if repo.get_channel(channel_results_path, channel_key) is None:
+            return jsonify({"error": "频道不存在"}), 404
         keys = (request.get_json(silent=True) or {}).get("result_keys", [])
+        operation_id = repo.begin_operation(
+            channel_results_path, "capture_result_screenshots", "channel", channel_key
+        )
         operations = _operations()
         try:
             ops_manager.run(
                 "screenshot",
                 lambda progress: operations.capture_result_screenshots(
-                    channel_key, keys, progress),
+                    channel_key, keys, progress, operation_id=operation_id
+                ),
             )
         except RuntimeError as exc:
+            repo.finish_operation(channel_results_path, operation_id, "cancelled")
             return jsonify({"error": str(exc)}), 409
-        return jsonify({"ok": True})
+        return jsonify({"operation_id": operation_id})
 
     return bp

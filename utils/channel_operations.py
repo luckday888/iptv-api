@@ -87,9 +87,12 @@ class ChannelOperations:
         channel_key: str,
         result_keys: list[str],
         progress=None,
+        operation_id: str | None = None,
     ) -> list[dict]:
         """Retest a user-selected subset of a channel's candidate pool."""
-        operation_id = begin_operation(self.db_path, "retest_results", "channel", channel_key)
+        # operation_id 可由外部预创建传入（如 Web 路由需立即返回 id）；缺省时维持内部创建
+        if operation_id is None:
+            operation_id = begin_operation(self.db_path, "retest_results", "channel", channel_key)
         try:
             channel = get_channel(self.db_path, channel_key)
             rows = list_channel_results(self.db_path, channel_key)
@@ -201,13 +204,16 @@ class ChannelOperations:
         channel_key: str,
         result_keys: list[str],
         progress=None,
+        operation_id: str | None = None,
     ) -> dict:
-        operation_id = begin_operation(
-            self.db_path,
-            "capture_result_screenshots",
-            "channel",
-            channel_key,
-        )
+        # operation_id 可由外部预创建传入；缺省时维持内部创建
+        if operation_id is None:
+            operation_id = begin_operation(
+                self.db_path,
+                "capture_result_screenshots",
+                "channel",
+                channel_key,
+            )
         try:
             channel = get_channel(self.db_path, channel_key)
             rows = list_channel_results(self.db_path, channel_key)
@@ -295,8 +301,15 @@ class ChannelOperations:
             finish_operation(self.db_path, operation_id, "failed", str(exc))
             raise
 
-    async def retest_channel(self, channel_key: str, progress=None) -> list[dict]:
-        operation_id = begin_operation(self.db_path, "retest_channel", "channel", channel_key)
+    async def retest_channel(
+        self,
+        channel_key: str,
+        progress=None,
+        operation_id: str | None = None,
+    ) -> list[dict]:
+        # operation_id 可由外部预创建传入；缺省时维持内部创建
+        if operation_id is None:
+            operation_id = begin_operation(self.db_path, "retest_channel", "channel", channel_key)
         try:
             channel = get_channel(self.db_path, channel_key)
             rows = list_channel_results(self.db_path, channel_key)

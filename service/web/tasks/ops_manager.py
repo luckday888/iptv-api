@@ -17,9 +17,11 @@ class OpsManager:
         with self._lock:
             return dict(self._snapshot)
 
-    def _progress(self, title, percent, **kwargs):
+    def _progress(self, current, total, name=""):
+        # 与 ChannelOperations 的回调约定一致：progress(current, total, name)
+        percent = int(current / total * 100) if total else 0
         with self._lock:
-            self._snapshot.update(title=str(title), percent=int(percent))
+            self._snapshot.update(title=str(name), percent=percent)
 
     def run(self, kind, coro_factory):
         with self._lock:
@@ -42,13 +44,17 @@ class OpsManager:
                 self._snapshot.update(running=False, percent=100)
         except Exception as exc:
             with self._lock:
-                self._snapshot.update(running=False, error=str(exc))
+                # 失败时清掉半截进度，避免误显示
+                self._snapshot.update(running=False, percent=0, error=str(exc))
         finally:
             loop.close()
 
     def wait_idle(self, timeout=10):
-        if self._thread:
-            self._thread.join(timeout)
+        # 仅在读 self._thread 时持锁，join 必须在锁外（工作线程收尾时也要拿锁）
+        with self._lock:
+            thread = self._thread
+        if thread:
+            thread.join(timeout)
 
 
 ops_manager = OpsManager()
