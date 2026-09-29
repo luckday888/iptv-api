@@ -300,6 +300,8 @@ pipenv run ui_build
 
 ### Docker
 
+> Web 管理端版本的完整部署说明（含双容器、HTTPS、源码部署）：[docs/web/DEPLOY.md](./docs/web/DEPLOY.md)
+
 #### 1. Compose 部署（推荐）
 
 下载[docker-compose.yml](./docker-compose.yml)或复制内容创建（内部参数可按需更改），在文件所在路径下运行以下命令即可部署：
