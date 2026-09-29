@@ -2,7 +2,7 @@
 
 版本：v1.0
 日期：2026-09-29
-适用版本：含 Web 管理端的版本（代码合并至 master 后生效）
+适用版本：含 Web 管理端的版本
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 镜像形态：单镜像、多阶段构建
 
-本项目**只有一个镜像**，由 `Dockerfile.web-admin` 分三个构建阶段（上游原版 `Dockerfile` 保持不变）：
+本项目**只有一个镜像**，由 `Dockerfile.web-admin` 分三个构建阶段：
 
 | 阶段 | 基础镜像 | 产物 |
 |---|---|---|
@@ -18,13 +18,13 @@
 | `builder` | python:3.14-alpine | Python venv、编译安装带 rtmp 模块的 nginx |
 | runtime（最终镜像） | python:3.14-alpine | venv + nginx + 前端 dist + 业务代码 |
 
-一个容器内运行三个进程（见 [entrypoint.web-admin.sh](../../entrypoint.web-admin.sh)；上游原版 `entrypoint.sh` 保持不变）：
+一个容器内运行三个进程（见 [entrypoint.web-admin.sh](../../entrypoint.web-admin.sh)）：
 
 - **nginx**（监听 8080/1935）：托管管理端静态文件、反向代理管理 API、提供订阅接口入口、RTMP 转推、HLS、/stat 统计；
 - **gunicorn**（监听 127.0.0.1:5180，sync 单 worker）：Flask 应用，提供订阅接口与 `/api/admin/*` 管理 API；
 - **main.py**：按配置执行订阅源更新任务。
 
-> 前端构建阶段与后端构建阶段互相独立，但**运行期在同一容器内**。如果部署规范要求前后端容器分离，参见 [第 7 章 手动双容器部署](#7-手动双容器部署不改代码)，无需修改仓库代码。
+> 默认部署形态为单容器。如需网关与后端分容器运行，参见 [第 7 章 双容器部署](#7-双容器部署)。
 
 ### 1.2 端口
 
@@ -83,13 +83,13 @@ docker compose -f docker-compose.web-admin.yml down
 docker compose -f docker-compose.web-admin.yml logs -f
 ```
 
-> 上游原版 `docker-compose.yml` 部署的是不含 Web 管理端的官方镜像，两者互不影响。
+> 官方 `docker-compose.yml` 部署不含 Web 管理端的镜像，可与本配置并存。
 
 ---
 
 ## 3. 纯后端模式（不启用 Web 管理端）
 
-直接使用**上游官方镜像**即可，无需使用 web-admin 镜像或覆盖启动命令。官方镜像包含订阅源更新、订阅接口、RTMP 转推、HLS、/stat 统计，仅缺少 Web 管理端：
+使用**官方镜像**即可。官方镜像包含订阅源更新、订阅接口、RTMP 转推、HLS、/stat 统计，不含 Web 管理端：
 
 | 路径 | 行为 |
 |---|---|
@@ -114,7 +114,7 @@ docker run -d \
 
 ### 3.2 docker compose
 
-直接使用上游原版 `docker-compose.yml`：
+使用官方 `docker-compose.yml`：
 
 ```bash
 docker compose up -d
@@ -122,9 +122,9 @@ docker compose up -d
 PORT=8088 docker compose up -d
 ```
 
-### 3.3 用上游原版 Dockerfile 自行构建
+### 3.3 用官方 Dockerfile 自行构建
 
-需要离线构建或基于上游代码定制时，使用仓库中已恢复原样的 `Dockerfile`：
+需要离线构建或自行定制时，使用官方 `Dockerfile`：
 
 ```bash
 docker build -f Dockerfile -t iptv-api:latest .
@@ -139,13 +139,13 @@ pipenv run dev       # 终端1：订阅源更新
 pipenv run service   # 终端2：订阅接口（默认 5180）
 ```
 
-> 需求是"保留 RTMP 但关闭管理端"的场景同样由上游官方镜像天然满足，无需任何开关。
+> 官方镜像不含管理端，仅使用后端与 RTMP 功能时无需额外配置。
 
 ---
 
 ## 4. 自行构建镜像
 
-需要在安装了 Docker 的主机上执行（本项目规范要求 Docker 构建在远程构建主机完成）：
+需要在安装了 Docker 的主机上执行：
 
 ```bash
 # 克隆仓库
@@ -230,9 +230,9 @@ docker logs iptv-api 2>&1 | grep 初始化
 
 ---
 
-## 7. 手动双容器部署（不改代码）
+## 7. 双容器部署
 
-适用于部署规范要求"网关/前端"与"后端"容器分离的场景。仓库已提供 [docker-compose.web-admin-split.yml](../../docker-compose.web-admin-split.yml)，两个容器使用**同一镜像**，通过覆盖启动命令实现分工：网关容器只跑 nginx，后端容器只跑 main.py + gunicorn。
+适用于需要将"网关/前端"与"后端"分容器部署的场景。随项目提供 [docker-compose.web-admin-split.yml](../../docker-compose.web-admin-split.yml)，两个容器使用**同一镜像**分别承担职责：网关容器运行 nginx，后端容器运行 main.py + gunicorn。
 
 ### 7.1 拓扑
 

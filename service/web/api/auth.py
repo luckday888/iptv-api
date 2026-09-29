@@ -47,7 +47,7 @@ def build_auth_blueprint():
 
     @bp.post("/login")
     def login():
-        # 密码未初始化（首启逻辑理论上已兜底）时拒绝签发会话
+        # 密码未初始化时拒绝签发会话
         if not config.admin_password:
             return jsonify({"error": "管理密码未初始化"}), 403
         # 限流按真实客户端 IP：前置 nginx 已用 X-Real-IP 覆写为 $remote_addr，

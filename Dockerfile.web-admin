@@ -1,4 +1,4 @@
-# Web 管理端专用 Dockerfile：上游原版 Dockerfile 保持不变
+# Web 管理端镜像构建文件
 # 构建：docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
 
 # 前端构建阶段：产出管理端静态文件

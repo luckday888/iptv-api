@@ -1,4 +1,4 @@
-# Web 管理端专用 nginx 配置模板：上游原版 nginx.conf.template 保持不变
+# Web 管理端 nginx 配置模板
 worker_processes 1;
 
 pid /tmp/nginx.pid;

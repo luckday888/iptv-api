@@ -1,4 +1,4 @@
-# Web 管理端专用 Compose：上游原版 docker-compose.yml 保持不变
+# Web 管理端 Compose 配置
 # 先构建镜像：docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
 # 启动：docker compose -f docker-compose.web-admin.yml up -d
 services:
