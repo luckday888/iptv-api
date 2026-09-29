@@ -95,6 +95,108 @@ def test_login_rate_limit_returns_429():
     auth_module._failures.pop(ip, None)
 
 
+def test_rate_limit_per_x_real_ip():
+    # 同一 X-Real-IP 连续失败达到阈值后被限流
+    from service.web.api import auth as auth_module
+    ip = "203.0.113.77"
+    auth_module._failures.pop(ip, None)
+    client = _client()
+    for _ in range(config.admin_login_rate_limit):
+        res = client.post(
+            "/api/admin/auth/login",
+            json={"password": "wrong"},
+            headers={"X-Real-IP": ip},
+        )
+        assert res.status_code == 401
+    blocked = client.post(
+        "/api/admin/auth/login",
+        json={"password": config.admin_password},
+        headers={"X-Real-IP": ip},
+    )
+    assert blocked.status_code == 429
+    auth_module._failures.pop(ip, None)
+
+
+def test_rate_limit_buckets_isolated_per_x_real_ip():
+    # 两个不同 X-Real-IP 的失败计数互不影响
+    from service.web.api import auth as auth_module
+    ip_a = "203.0.113.10"
+    ip_b = "203.0.113.20"
+    auth_module._failures.pop(ip_a, None)
+    auth_module._failures.pop(ip_b, None)
+    client = _client()
+    # A 先累计 limit-1 次失败
+    for _ in range(config.admin_login_rate_limit - 1):
+        assert client.post(
+            "/api/admin/auth/login",
+            json={"password": "wrong"},
+            headers={"X-Real-IP": ip_a},
+        ).status_code == 401
+    # B 独立累计到被限流
+    for _ in range(config.admin_login_rate_limit):
+        assert client.post(
+            "/api/admin/auth/login",
+            json={"password": "wrong"},
+            headers={"X-Real-IP": ip_b},
+        ).status_code == 401
+    assert client.post(
+        "/api/admin/auth/login",
+        json={"password": "wrong"},
+        headers={"X-Real-IP": ip_b},
+    ).status_code == 429
+    # A 的桶未受 B 影响，正确密码仍可登录成功
+    ok = client.post(
+        "/api/admin/auth/login",
+        json={"password": config.admin_password},
+        headers={"X-Real-IP": ip_a},
+    )
+    assert ok.status_code == 200
+    auth_module._failures.pop(ip_a, None)
+    auth_module._failures.pop(ip_b, None)
+
+
+def test_rate_limit_fallback_to_remote_addr():
+    # 无 X-Real-IP（直连）时限流回退到对端地址
+    from service.web.api import auth as auth_module
+    ip = "198.51.100.88"
+    auth_module._failures.pop(ip, None)
+    client = _client()
+    for _ in range(config.admin_login_rate_limit):
+        assert client.post(
+            "/api/admin/auth/login",
+            json={"password": "wrong"},
+            environ_overrides={"REMOTE_ADDR": ip},
+        ).status_code == 401
+    assert client.post(
+        "/api/admin/auth/login",
+        json={"password": config.admin_password},
+        environ_overrides={"REMOTE_ADDR": ip},
+    ).status_code == 429
+    auth_module._failures.pop(ip, None)
+
+
+def test_login_cookie_secure_over_https():
+    # nginx 透传 X-Forwarded-Proto: https 时 cookie 带 Secure
+    res = _client().post(
+        "/api/admin/auth/login",
+        json={"password": config.admin_password},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    assert res.status_code == 200
+    assert "Secure" in res.headers.get("Set-Cookie", "")
+
+
+def test_login_cookie_not_secure_over_http():
+    # 未透传 https（即 http 请求）时 cookie 不带 Secure
+    res = _client().post(
+        "/api/admin/auth/login",
+        json={"password": config.admin_password},
+    )
+    assert res.status_code == 200
+    assert "Secure" not in res.headers.get("Set-Cookie", "")
+
+
+
 @pytest.fixture
 def password_change_ctx(monkeypatch):
     # 屏蔽配置落盘，用例结束后恢复原管理密码，避免污染其它测试

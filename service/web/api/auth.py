@@ -50,8 +50,9 @@ def build_auth_blueprint():
         # 密码未初始化（首启逻辑理论上已兜底）时拒绝签发会话
         if not config.admin_password:
             return jsonify({"error": "管理密码未初始化"}), 403
-        # 以直连对端地址作为限流维度，不采信可伪造的转发头
-        ip = request.remote_addr or "?"
+        # 限流按真实客户端 IP：前置 nginx 已用 X-Real-IP 覆写为 $remote_addr，
+        # 客户端无法伪造；无该头（直连）时回退对端地址
+        ip = request.headers.get("X-Real-IP") or request.remote_addr or "?"
         if _rate_limited(ip):
             return jsonify({"error": "失败次数过多，请稍后再试"}), 429
         password = (request.get_json(silent=True) or {}).get("password", "")
@@ -63,9 +64,13 @@ def build_auth_blueprint():
         days = config.admin_session_days
         resp = jsonify({"username": "admin",
                         "expires_at": time.time() + days * 86400})
-        # 固定 Path=/，保证 cookie 在全部管理蓝图间共享
-        resp.set_cookie(COOKIE_NAME, token, max_age=days * 86400,
-                        path="/", httponly=True, samesite="Lax")
+        # 固定 Path=/，保证 cookie 在全部管理蓝图间共享；
+        # 按 nginx 透传的请求协议动态启用 Secure
+        resp.set_cookie(
+            COOKIE_NAME, token, max_age=days * 86400,
+            path="/", httponly=True, samesite="Lax",
+            secure=(request.headers.get("X-Forwarded-Proto") == "https"),
+        )
         return resp
 
     @bp.post("/logout")
