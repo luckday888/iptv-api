@@ -1,3 +1,19 @@
+# Web 管理端专用 Dockerfile：上游原版 Dockerfile 保持不变
+# 构建：docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
+
+# 前端构建阶段：产出管理端静态文件
+FROM node:22-alpine AS web_builder
+
+WORKDIR /web_admin
+
+COPY web_admin/package.json web_admin/package-lock.json* ./
+
+RUN npm install --registry=https://registry.npmmirror.com
+
+COPY web_admin/ ./
+
+RUN npm run build
+
 FROM python:3.14-alpine AS builder
 
 ARG APP_WORKDIR=/iptv-api
@@ -49,6 +65,7 @@ COPY . $APP_WORKDIR
 
 COPY --from=builder $APP_WORKDIR/.venv $APP_WORKDIR/.venv
 COPY --from=builder /usr/local/nginx /usr/local/nginx
+COPY --from=web_builder /web_admin/dist /usr/local/nginx/html/admin
 
 RUN mkdir -p /var/log/nginx && \
   ln -sf /dev/stdout /var/log/nginx/access.log && \
@@ -63,7 +80,8 @@ COPY entrypoint.sh /iptv-api-entrypoint.sh
 
 COPY config /iptv-api-config
 
-COPY nginx.conf.template /etc/nginx/nginx.conf.template
+# 使用管理端专用 nginx 配置模板（含静态资源 MIME、/admin 与 /api/admin 反代）
+COPY nginx.web-admin.conf.template /etc/nginx/nginx.conf.template
 
 RUN mkdir -p /usr/local/nginx/html
 

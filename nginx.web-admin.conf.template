@@ -1,3 +1,4 @@
+# Web 管理端专用 nginx 配置模板：上游原版 nginx.conf.template 保持不变
 worker_processes 1;
 
 pid /tmp/nginx.pid;
@@ -24,6 +25,25 @@ rtmp {
 }
 
 http {
+    # 镜像内无 mime.types，内联管理端静态资源所需 MIME 类型
+    types {
+        text/html html;
+        text/css css;
+        text/xml xml xsl;
+        application/javascript js mjs;
+        application/json json;
+        image/svg+xml svg;
+        image/png png;
+        image/jpeg jpg jpeg;
+        image/gif gif;
+        image/x-icon ico;
+        image/webp webp;
+        font/woff woff;
+        font/woff2 woff2;
+        font/ttf ttf;
+    }
+    default_type application/octet-stream;
+
     server {
         listen ${NGINX_HTTP_PORT};
         ${IPV6_HTTP_LISTEN}
@@ -35,6 +55,22 @@ http {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
             add_header Access-Control-Allow-Origin *;
+        }
+
+        # 管理端静态资源，history 路由回退 index.html
+        location /admin {
+            root /usr/local/nginx/html;
+            index index.html;
+            try_files $uri $uri/ /admin/index.html;
+        }
+
+        # 管理 API 反代到 Flask
+        location /api/admin/ {
+            proxy_pass http://127.0.0.1:${APP_PORT};
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
         }
 
         # This URL provides RTMP statistics in XML

@@ -1,0 +1,31 @@
+# Web 管理端专用 Compose：上游原版 docker-compose.yml 保持不变
+# 先构建镜像：docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
+# 启动：docker compose -f docker-compose.web-admin.yml up -d
+services:
+  iptv-api:
+    image: iptv-api:web-admin
+    container_name: iptv-api
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+
+    ports:
+      - "${PORT:-80}:8080"
+      - "1935:1935"
+
+    volumes:
+      - ./config:/iptv-api/config
+      - ./output:/iptv-api/output
+
+    environment:
+      # 管理端登录密码（首次注入后持久化，可删除此项）
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      PUBLIC_SCHEME: "http"
+      # 对外域名或 IP
+      PUBLIC_DOMAIN: "${PUBLIC_DOMAIN:-127.0.0.1}"
+      PUBLIC_PORT: "${PORT:-80}"
+      # 推荐：设置完整对外地址，如 http://192.168.1.10；留空则使用挂载配置中的值
+      PUBLIC_URL: "${PUBLIC_URL:-}"
+      NGINX_HTTP_PORT: "8080"
+      CDN_URL: ""
+      HTTP_PROXY: ""
