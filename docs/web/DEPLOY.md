@@ -2,7 +2,7 @@
 
 版本：v1.0
 日期：2026-09-29
-适用版本：feature/web-admin（含 Web 管理端的版本）
+适用版本：含 Web 管理端的版本（代码合并至 master 后生效）
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1.1 镜像形态：单镜像、多阶段构建
 
-本项目**只有一个镜像**，Dockerfile 分三个构建阶段：
+本项目**只有一个镜像**，由 `Dockerfile.web-admin` 分三个构建阶段（上游原版 `Dockerfile` 保持不变）：
 
 | 阶段 | 基础镜像 | 产物 |
 |---|---|---|
@@ -67,37 +67,23 @@ docker run -d \
 
 ### 2.2 docker compose（推荐）
 
-在部署目录创建 `docker-compose.yml`：
+使用仓库中的 `docker-compose.web-admin.yml`（可下载或复制内容，内部参数可按需更改）。首次使用先构建镜像：
 
-```yaml
-services:
-  iptv-api:
-    image: iptv-api:web-admin
-    container_name: iptv-api
-    restart: unless-stopped
-    tty: true
-    ports:
-      - "80:8080"
-      - "1935:1935"
-    volumes:
-      - ./config:/iptv-api/config
-      - ./output:/iptv-api/output
-    environment:
-      # 管理端登录密码（首次注入后可删除此项，密码已持久化）
-      ADMIN_PASSWORD: "请修改为强密码"
-      # 订阅接口对外的完整地址，按实际域名/IP 修改
-      PUBLIC_URL: "http://192.168.1.10"
-      # 纯反代/HTTPS 场景透传（本机直连通常无需设置）
-      # HTTP_PROXY: "http://代理地址:端口"
+```bash
+docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
 ```
 
 启动 / 停止 / 查看日志：
 
 ```bash
-docker compose up -d
-docker compose down
-docker compose logs -f
+# 可通过环境变量指定管理密码；留空则首启自动生成随机密码（查看启动日志获取）
+ADMIN_PASSWORD='你的强密码' \
+  docker compose -f docker-compose.web-admin.yml up -d
+docker compose -f docker-compose.web-admin.yml down
+docker compose -f docker-compose.web-admin.yml logs -f
 ```
+
+> 上游原版 `docker-compose.yml` 部署的是不含 Web 管理端的官方镜像，两者互不影响。
 
 ---
 
@@ -197,10 +183,9 @@ pipenv run service   # 终端2：订阅接口（默认 5180）
 # 克隆仓库
 git clone <仓库地址> iptv-api
 cd iptv-api
-git checkout feature/web-admin
 
-# 构建（Dockerfile 已内置 npmmirror / aliyun / tuna 镜像源）
-docker build -t iptv-api:web-admin .
+# 使用管理端专用 Dockerfile 构建（已内置 npmmirror / aliyun / tuna 镜像源）
+docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
 ```
 
 构建参数（一般无需修改）：`APP_WORKDIR`（默认 `/iptv-api`）、`NGINX_VER`（1.27.4）、`RTMP_VER`（1.2.2）。
@@ -514,7 +499,7 @@ systemctl enable --now iptv-update iptv-web
 
 ### 9.6 源码部署的前端托管
 
-由系统 nginx 托管 `web_admin/dist` 并反代 API（参考配置，按需调整；RTMP/HLS 配置可参照仓库 [nginx.conf.template](../../nginx.conf.template)）：
+由系统 nginx 托管 `web_admin/dist` 并反代 API（参考配置，按需调整；RTMP/HLS 配置可参照仓库 [nginx.web-admin.conf.template](../../nginx.web-admin.conf.template)）：
 
 ```nginx
 server {
@@ -559,8 +544,9 @@ pipenv run ui_build    # 打包桌面安装包
 ### 10.1 镜像升级
 
 ```bash
-docker pull <镜像仓库>:<标签>          # 或在构建主机重新 docker build
-docker compose up -d                   # 使用新镜像重建容器
+# 在构建主机重新构建镜像
+docker build -f Dockerfile.web-admin -t iptv-api:web-admin .
+docker compose -f docker-compose.web-admin.yml up -d   # 使用新镜像重建容器
 ```
 
 `config/`、`output/` 在挂载卷中，升级不丢失；镜像内新增的默认配置项会自动补齐（已存在文件不覆盖）。
@@ -568,7 +554,7 @@ docker compose up -d                   # 使用新镜像重建容器
 ### 10.2 源码升级
 
 ```bash
-git fetch && git checkout <目标版本>
+git pull
 PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy
 cd web_admin && npm install && npm run build && cd ..
 sudo systemctl restart iptv-update iptv-web
