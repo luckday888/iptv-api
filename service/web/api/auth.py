@@ -96,7 +96,8 @@ def build_auth_blueprint():
         old_password = body.get("old_password", "")
         new_password = body.get("new_password", "")
         if not _password_matches(old_password):
-            return jsonify({"error": "原密码错误"}), 401
+            # 会话本身已通过鉴权，旧密码不符属于请求参数校验失败，返回 400
+            return jsonify({"error": "原密码错误"}), 400
         if not isinstance(new_password, str) or not new_password:
             return jsonify({"error": "新密码不能为空"}), 400
         # 持久化新密码到用户配置文件

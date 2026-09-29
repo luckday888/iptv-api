@@ -68,7 +68,7 @@
 ### PUT /api/admin/auth/password
 修改管理密码。
 - Body：`{"old_password": "xxx", "new_password": "xxx"}`
-- 200：`{"ok": true}`；400：新密码不合规；401：旧密码错误。
+- 200：`{"ok": true}`；400：新密码不合规或旧密码错误。
 
 ---
 

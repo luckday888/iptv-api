@@ -221,8 +221,8 @@ def test_change_password_wrong_old(password_change_ctx):
         "/api/admin/auth/password",
         json={"old_password": "旧密码错误", "new_password": "newpass"},
     )
-    # 原密码错误（含非 ASCII）返回 401 而非 500
-    assert res.status_code == 401
+    # 原密码错误（含非 ASCII）属于参数校验失败返回 400 而非 500
+    assert res.status_code == 400
 
 
 def test_change_password_empty_new(password_change_ctx):
