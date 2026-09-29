@@ -121,6 +121,18 @@ def test_save_env_locked_key_rejected(env_locked_open_update, monkeypatch):
     assert touched == []
 
 
+def test_get_resolution_speed_map_raw():
+    # 该配置 property 返回 dict，GET 必须返回 ini 原始逗号串，保证回填保存闭环
+    from service.web.api import settings as settings_mod
+
+    res = _client().get("/api/admin/settings")
+    item = next(i for i in res.get_json()["items"]
+                if i["key"] == "resolution_speed_map")
+    expected = settings_mod.config.config.get(_SECTION, "resolution_speed_map")
+    assert item["value"] == expected
+    assert "{" not in item["value"]
+
+
 def test_get_settings_requires_login():
     # 未登录访问设置接口返回 401
     app = Flask(__name__)

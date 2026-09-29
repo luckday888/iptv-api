@@ -38,7 +38,11 @@ def build_settings_blueprint():
         # 读取配置元数据与当前值，供前端渲染设置表单
         items = []
         for key, rule in CONFIG_SCHEMA.items():
-            value = getattr(config, key, None)
+            if _kind_label(rule) == "resolution_speed_map":
+                # property 返回 dict（str 后为 Python repr），直接取 ini 原文保证回填/保存闭环
+                value = config.config.get(_SECTION, key, fallback="")
+            else:
+                value = getattr(config, key, None)
             items.append(
                 {
                     "key": key,
