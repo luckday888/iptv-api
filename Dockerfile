@@ -1,3 +1,16 @@
+# 前端构建阶段：产出管理端静态文件
+FROM node:22-alpine AS web_builder
+
+WORKDIR /web_admin
+
+COPY web_admin/package.json web_admin/package-lock.json* ./
+
+RUN npm install --registry=https://registry.npmmirror.com
+
+COPY web_admin/ ./
+
+RUN npm run build
+
 FROM python:3.14-alpine AS builder
 
 ARG APP_WORKDIR=/iptv-api
@@ -49,6 +62,7 @@ COPY . $APP_WORKDIR
 
 COPY --from=builder $APP_WORKDIR/.venv $APP_WORKDIR/.venv
 COPY --from=builder /usr/local/nginx /usr/local/nginx
+COPY --from=web_builder /web_admin/dist /usr/local/nginx/html/admin
 
 RUN mkdir -p /var/log/nginx && \
   ln -sf /dev/stdout /var/log/nginx/access.log && \
