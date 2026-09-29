@@ -24,6 +24,25 @@ rtmp {
 }
 
 http {
+    # 镜像内无 mime.types，内联管理端静态资源所需 MIME 类型
+    types {
+        text/html html;
+        text/css css;
+        text/xml xml xsl;
+        application/javascript js mjs;
+        application/json json;
+        image/svg+xml svg;
+        image/png png;
+        image/jpeg jpg jpeg;
+        image/gif gif;
+        image/x-icon ico;
+        image/webp webp;
+        font/woff woff;
+        font/woff2 woff2;
+        font/ttf ttf;
+    }
+    default_type application/octet-stream;
+
     server {
         listen ${NGINX_HTTP_PORT};
         ${IPV6_HTTP_LISTEN}
