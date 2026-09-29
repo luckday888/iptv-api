@@ -28,31 +28,47 @@ def _record_failure(ip: str):
         _failures.setdefault(ip, []).append(time.time())
 
 
+def _clear_failures(ip: str):
+    # 登录成功后清除该 IP 的历史失败计数
+    with _lock:
+        _failures.pop(ip, None)
+
+
+def _password_matches(password) -> bool:
+    # 按 UTF-8 字节做常量时间比较，兼容非 ASCII 密码
+    return secrets.compare_digest(
+        str(password).encode("utf-8"),
+        config.admin_password.encode("utf-8"),
+    )
+
+
 def build_auth_blueprint():
     bp = Blueprint("admin_auth", __name__, url_prefix="/api/admin/auth")
 
     @bp.post("/login")
     def login():
-        # 优先取反向代理转发头中的客户端 IP 作为限流维度
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?")
+        # 以直连对端地址作为限流维度，不采信可伪造的转发头
+        ip = request.remote_addr or "?"
         if _rate_limited(ip):
             return jsonify({"error": "失败次数过多，请稍后再试"}), 429
         password = (request.get_json(silent=True) or {}).get("password", "")
-        if not secrets.compare_digest(str(password), config.admin_password):
+        if not _password_matches(password):
             _record_failure(ip)
             return jsonify({"error": "密码错误"}), 401
+        _clear_failures(ip)
         token = create_session()
         days = config.admin_session_days
         resp = jsonify({"username": "admin",
                         "expires_at": time.time() + days * 86400})
+        # 固定 Path=/，保证 cookie 在全部管理蓝图间共享
         resp.set_cookie(COOKIE_NAME, token, max_age=days * 86400,
-                        httponly=True, samesite="Lax")
+                        path="/", httponly=True, samesite="Lax")
         return resp
 
     @bp.post("/logout")
     def logout():
         resp = jsonify({"ok": True})
-        resp.delete_cookie(COOKIE_NAME)
+        resp.delete_cookie(COOKIE_NAME, path="/")
         return resp
 
     @bp.get("/session")
@@ -71,7 +87,7 @@ def build_auth_blueprint():
         body = request.get_json(silent=True) or {}
         old_password = body.get("old_password", "")
         new_password = body.get("new_password", "")
-        if not secrets.compare_digest(str(old_password), config.admin_password):
+        if not _password_matches(old_password):
             return jsonify({"error": "原密码错误"}), 401
         if not isinstance(new_password, str) or not new_password:
             return jsonify({"error": "新密码不能为空"}), 400
@@ -80,7 +96,7 @@ def build_auth_blueprint():
         config.save()
         # 密钥随密码变更，旧会话失效，删除 cookie 要求重新登录
         resp = jsonify({"ok": True})
-        resp.delete_cookie(COOKIE_NAME)
+        resp.delete_cookie(COOKIE_NAME, path="/")
         return resp
 
     return bp
