@@ -4,6 +4,7 @@ import {
   Button, Card, Form, Input, InputNumber, message, Select, Space, Switch,
 } from 'antd'
 import { useQuery } from '@tanstack/react-query'
+import { changePassword } from '../../api/auth'
 import { getSettings, saveSettings } from '../../api/settings'
 
 // 后端允许清空（ConfigRule(allow_empty=True)）的 list 配置键，
@@ -31,9 +32,11 @@ function serializeListValue(value) {
 
 export default function SettingsPage() {
   const [form] = Form.useForm()
+  const [pwdForm] = Form.useForm()
   const { data } = useQuery({ queryKey: ['settings'], queryFn: getSettings })
   const items = data?.items ?? []
   const [saving, setSaving] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
 
   useEffect(() => {
     const values = {}
@@ -68,7 +71,22 @@ export default function SettingsPage() {
     }
   }
 
+  const onChangePassword = async (values) => {
+    setChangingPassword(true)
+    try {
+      await changePassword(values.oldPassword, values.newPassword)
+      // 后端改密成功后已删除会话 cookie，需使用新密码重新登录
+      message.success('密码已修改，请使用新密码重新登录')
+      window.location.href = '/admin/login'
+    } catch (error) {
+      message.error(error.message)
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
   return (
+    <>
     <Card title="设置">
       <Form form={form} layout="vertical" style={{ maxWidth: 720 }}
             onFinish={onFinish}>
@@ -102,5 +120,48 @@ export default function SettingsPage() {
         </Form.Item>
       </Form>
     </Card>
+    <Card title="修改密码" style={{ marginTop: 16 }}>
+      <Form form={pwdForm} layout="vertical" style={{ maxWidth: 720 }}
+            onFinish={onChangePassword}>
+        <Form.Item
+          label="旧密码"
+          name="oldPassword"
+          rules={[{ required: true, message: '请输入旧密码' }]}
+        >
+          <Input.Password autoComplete="current-password" />
+        </Form.Item>
+        <Form.Item
+          label="新密码"
+          name="newPassword"
+          rules={[{ required: true, message: '请输入新密码' }]}
+        >
+          <Input.Password autoComplete="new-password" />
+        </Form.Item>
+        <Form.Item
+          label="确认新密码"
+          name="confirmPassword"
+          dependencies={['newPassword']}
+          rules={[
+            { required: true, message: '请再次输入新密码' },
+            ({ getFieldValue }) => ({
+              validator(_, value) {
+                if (!value || getFieldValue('newPassword') === value) {
+                  return Promise.resolve()
+                }
+                return Promise.reject(new Error('两次输入的密码不一致'))
+              },
+            }),
+          ]}
+        >
+          <Input.Password autoComplete="new-password" />
+        </Form.Item>
+        <Form.Item>
+          <Button type="primary" htmlType="submit" loading={changingPassword}>
+            修改密码
+          </Button>
+        </Form.Item>
+      </Form>
+    </Card>
+    </>
   )
 }
