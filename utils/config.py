@@ -4,6 +4,7 @@ import ipaddress
 import math
 import os
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -253,6 +254,8 @@ class ConfigManager:
         self._detected_public_domain = None
         self.load()
         self.override_config_with_env()
+        # 环境变量覆盖之后、全量校验之前，落实首启随机管理密码
+        self.initialize_admin_password()
         self.validate()
 
     def __getattr__(self, name, *args, **kwargs):
@@ -826,6 +829,20 @@ class ConfigManager:
                         self.config.set(section, key, env_val)
                         self._sources[(section, key)] = f"环境变量 {env_name}"
                         break
+
+    def initialize_admin_password(self):
+        # 管理密码为空（首启且未被环境变量/用户配置设置）时生成随机密码并落盘，
+        # 从根本上杜绝空密码直接登录
+        if self.admin_password != "":
+            return
+        password = secrets.token_urlsafe(12)
+        self.config.set("Settings", "admin_password", password)
+        self.save()
+        print("=" * 60)
+        print("[初始化] 未检测到管理密码，已生成随机管理密码：")
+        print(f"[初始化] {password}")
+        print("[初始化] 请尽快登录管理后台修改密码并妥善保存。")
+        print("=" * 60)
 
     def _source(self, section, key):
         return self._sources.get((section, key), "配置")

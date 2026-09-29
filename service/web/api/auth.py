@@ -47,6 +47,9 @@ def build_auth_blueprint():
 
     @bp.post("/login")
     def login():
+        # 密码未初始化（首启逻辑理论上已兜底）时拒绝签发会话
+        if not config.admin_password:
+            return jsonify({"error": "管理密码未初始化"}), 403
         # 以直连对端地址作为限流维度，不采信可伪造的转发头
         ip = request.remote_addr or "?"
         if _rate_limited(ip):
