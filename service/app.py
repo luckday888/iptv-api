@@ -509,6 +509,11 @@ def _prompt_rtmp_install():
         ))
 
 
+# 将 Web 管理端全部蓝图注册到当前应用
+from service.web import register_web
+register_web(app)
+
+
 def run_service(prompt_for_install=True, parent_pid=0):
     global _service_parent_pid, _service_started_at
     _configure_service_output()
