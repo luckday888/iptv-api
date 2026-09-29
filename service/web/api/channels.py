@@ -111,15 +111,31 @@ def build_channels_blueprint():
         )
         return jsonify({"deleted": deleted})
 
+    @bp.get("/<channel_key>/selection")
+    @admin_required
+    def get_selection(channel_key):
+        # 读取当前输出选择：mode 为 auto/manual，items 为按 rank 升序的已选接口
+        channel = repo.get_channel(channel_results_path, channel_key)
+        if channel is None:
+            return jsonify({"error": "频道不存在"}), 404
+        rows = repo.list_channel_results(channel_results_path, channel_key)
+        items = [
+            {"result_key": row["result_key"], "rank": row["selected_rank"]}
+            for row in rows
+            if row.get("selected_rank") is not None
+        ]
+        items.sort(key=lambda item: item["rank"])
+        return jsonify({"mode": channel["selection_mode"], "items": items})
+
     @bp.put("/<channel_key>/selection")
     @admin_required
     def update_selection(channel_key):
-        # 设置手动输出选择，入参为按 rank 排序的 result_keys
+        # 设置手动输出选择，入参为按 rank 排序的非空 result_keys
         if repo.get_channel(channel_results_path, channel_key) is None:
             return jsonify({"error": "频道不存在"}), 404
         keys = (request.get_json(silent=True) or {}).get("result_keys")
-        if not isinstance(keys, list):
-            return jsonify({"error": "result_keys 必须是数组"}), 400
+        if not isinstance(keys, list) or not keys:
+            return jsonify({"error": "至少选择一个接口"}), 400
         rows = repo.list_channel_results(channel_results_path, channel_key)
         by_key = {row["result_key"]: row for row in rows}
         selected = [

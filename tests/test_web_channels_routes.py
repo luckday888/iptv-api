@@ -68,6 +68,7 @@ def test_routes_require_auth():
     assert c.post("/api/admin/channels", json={"name": "x"}).status_code == 401
     assert c.delete("/api/admin/channels", json={"channel_keys": ["x"]}).status_code == 401
     assert c.get("/api/admin/channels/k/results").status_code == 401
+    assert c.get("/api/admin/channels/k/selection").status_code == 401
     assert c.put("/api/admin/channels/k/logo", json={"logo": ""}).status_code == 401
     assert c.put("/api/admin/channels/k/selection", json={"result_keys": []}).status_code == 401
 
@@ -163,9 +164,21 @@ def test_selection_put_and_reset(temp_db):
     rkey = client.post(
         f"/api/admin/channels/{key}/results", json={"url": "http://example.com/s.m3u8"}
     ).get_json()["result_key"]
-    # 入参必须是列表
+    # 入参必须是非空列表
     assert (
         client.put(f"/api/admin/channels/{key}/selection", json={}).status_code == 400
+    )
+    assert (
+        client.put(
+            f"/api/admin/channels/{key}/selection", json={"result_keys": []}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.put(
+            f"/api/admin/channels/{key}/selection", json={"result_keys": "x"}
+        ).status_code
+        == 400
     )
     res = client.put(
         f"/api/admin/channels/{key}/selection", json={"result_keys": [rkey]}
@@ -174,9 +187,45 @@ def test_selection_put_and_reset(temp_db):
     assert res.get_json() == {"ok": True}
     detail = client.get(f"/api/admin/channels/{key}").get_json()
     assert detail.get("selection_mode") == "manual"
+    # 读取手动选择，items 按 rank 升序且元素含 result_key/rank
+    res = client.get(f"/api/admin/channels/{key}/selection")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert set(data) == {"mode", "items"}
+    assert data["mode"] == "manual"
+    assert data["items"] == [{"result_key": rkey, "rank": 1}]
+    # 不存在的频道返回 404
+    assert client.get("/api/admin/channels/nope/selection").status_code == 404
     # 重置为自动
     res = client.post(f"/api/admin/channels/{key}/selection/reset")
     assert res.status_code == 200
     assert res.get_json() == {"ok": True}
     detail = client.get(f"/api/admin/channels/{key}").get_json()
     assert detail.get("selection_mode") == "auto"
+    # 自动模式下无手动选择项
+    data = client.get(f"/api/admin/channels/{key}/selection").get_json()
+    assert data == {"mode": "auto", "items": []}
+
+
+def test_selection_get_ranks_order(temp_db):
+    # GET selection 必须按 selected_rank 升序返回已选接口
+    client = _client()
+    key = client.post(
+        "/api/admin/channels", json={"name": "排序频道"}
+    ).get_json()["channel_key"]
+    r1 = client.post(
+        f"/api/admin/channels/{key}/results", json={"url": "http://example.com/1"}
+    ).get_json()["result_key"]
+    r2 = client.post(
+        f"/api/admin/channels/{key}/results", json={"url": "http://example.com/2"}
+    ).get_json()["result_key"]
+    # 反序提交，校验返回仍按 rank 升序
+    client.put(
+        f"/api/admin/channels/{key}/selection", json={"result_keys": [r2, r1]}
+    )
+    data = client.get(f"/api/admin/channels/{key}/selection").get_json()
+    assert data["mode"] == "manual"
+    assert data["items"] == [
+        {"result_key": r2, "rank": 1},
+        {"result_key": r1, "rank": 2},
+    ]
