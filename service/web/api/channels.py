@@ -221,12 +221,4 @@ def build_channels_blueprint():
             return jsonify({"error": str(exc)}), 409
         return jsonify({"ok": True})
 
-    @bp.get("/screenshots/<result_key>")
-    @admin_required
-    def screenshot_metadata(result_key):
-        row = repo.get_stream_screenshot(channel_results_path, result_key)
-        if row is None:
-            return jsonify({"error": "截图不存在"}), 404
-        return jsonify(row)
-
     return bp
