@@ -8,9 +8,10 @@ WORKDIR $APP_WORKDIR
 
 COPY Pipfile* ./
 
-RUN apk add --no-cache gcc musl-dev python3-dev libffi-dev zlib-dev jpeg-dev wget make pcre-dev openssl-dev \
-  && pip install pipenv \
-  && PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
+  && apk add --no-cache gcc musl-dev python3-dev libffi-dev zlib-dev jpeg-dev wget make pcre-dev openssl-dev \
+  && pip install pipenv -i https://pypi.tuna.tsinghua.edu.cn/simple \
+  && PIPENV_VENV_IN_PROJECT=1 PIPENV_PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple pipenv install --deploy
 
 RUN wget https://nginx.org/download/nginx-${NGINX_VER}.tar.gz && \
     tar xzf nginx-${NGINX_VER}.tar.gz
@@ -53,7 +54,8 @@ RUN mkdir -p /var/log/nginx && \
   ln -sf /dev/stdout /var/log/nginx/access.log && \
   ln -sf /dev/stderr /var/log/nginx/error.log
 
-RUN apk add --no-cache ffmpeg pcre
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
+  && apk add --no-cache ffmpeg pcre
 
 EXPOSE $NGINX_HTTP_PORT
 

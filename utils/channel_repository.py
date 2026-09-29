@@ -13,7 +13,7 @@ from utils.channel_quality import is_channel_result_valid
 from utils.config import config
 from utils.config import resource_path
 import utils.constants as constants
-from utils.db import get_db_connection, return_db_connection
+from utils.db import get_db_connection, return_db_connection, set_safe_journal_mode
 from utils.identity import stable_channel_id, stable_result_id
 from utils.i18n import t
 
@@ -32,9 +32,10 @@ def ensure_channel_repository(db_path: str) -> None:
     with _LOCK:
         conn = get_db_connection(db_path)
         try:
+            # 先安全设置日志模式：WAL 失败时自动降级，避免建表脚本直接报错
+            set_safe_journal_mode(conn)
             conn.executescript(
                 """
-                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS runs (
                     run_id TEXT PRIMARY KEY,
                     started_at REAL NOT NULL,

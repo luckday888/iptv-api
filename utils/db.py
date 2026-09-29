@@ -31,6 +31,19 @@ def _configure_connection(conn):
     return conn
 
 
+def set_safe_journal_mode(conn):
+    # WAL 在部分 Docker 挂载卷/网络存储上无法创建共享内存文件，
+    # 此时降级为 DELETE（传统回滚日志）模式，保证数据库可用。
+    try:
+        mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+        if mode and str(mode[0]).lower() == "wal":
+            return "wal"
+    except sqlite3.Error:
+        pass
+    conn.execute("PRAGMA journal_mode=DELETE")
+    return "delete"
+
+
 def get_db_connection(db_path):
     db_dir = os.path.dirname(db_path)
     if db_dir:
@@ -67,7 +80,7 @@ def ensure_result_data_schema(db_path):
         conn = get_db_connection(db_path)
         try:
             cursor = conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL")
+            set_safe_journal_mode(cursor)
             cursor.execute("BEGIN IMMEDIATE")
             cursor.execute(_RESULT_DATA_SCHEMA)
             cursor.execute("PRAGMA table_info(result_data)")
