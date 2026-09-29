@@ -76,7 +76,7 @@ RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 
 EXPOSE $NGINX_HTTP_PORT
 
-COPY entrypoint.sh /iptv-api-entrypoint.sh
+COPY entrypoint.web-admin.sh /iptv-api-entrypoint.sh
 
 COPY config /iptv-api-config
 

@@ -36,6 +36,20 @@ def test_env_password_skips_generation(tmp_path):
     assert not user_config.exists()
 
 
+def test_blank_env_password_keeps_persisted(tmp_path):
+    # Compose 占位产生的空字符串环境变量视为未设置，
+    # 不得清空已落盘的管理密码并触发重新生成
+    user_config = tmp_path / "user_config.ini"
+    cm = ConfigManager(user_config_path=str(user_config))
+    password = cm.admin_password
+
+    cm_again = ConfigManager(
+        user_config_path=str(user_config),
+        environ={"ADMIN_PASSWORD": ""},
+    )
+    assert cm_again.admin_password == password
+
+
 def test_login_blocked_when_password_empty(monkeypatch):
     # monkeypatch 使管理密码为空：任意登录输入均被拒，且不签发会话 cookie
     monkeypatch.setattr(

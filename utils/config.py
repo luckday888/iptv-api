@@ -818,14 +818,9 @@ class ConfigManager:
                 candidates = (key, key.upper(), section_key, section_key.upper())
                 for env_name in candidates:
                     env_val = self._environ.get(env_name)
-                    if env_val is not None:
-                        # Empty Compose placeholders must not clear values saved
-                        # in the mounted configuration.
-                        if (
-                            key in {"public_url", "http_proxy"}
-                            and not str(env_val).strip()
-                        ):
-                            continue
+                    # 空或纯空白的环境变量视为未设置，
+                    # 避免 Compose 占位变量清空已落盘的配置（如管理密码）
+                    if env_val is not None and str(env_val).strip():
                         self.config.set(section, key, env_val)
                         self._sources[(section, key)] = f"环境变量 {env_name}"
                         break
