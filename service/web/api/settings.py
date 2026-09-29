@@ -3,11 +3,23 @@ from flask import Blueprint, jsonify, request
 from service.web.auth.decorators import admin_required
 from utils.config import CONFIG_SCHEMA, config
 
-# 环境变量覆盖的配置只读（当前暂无，后续按需扩展）
-_ENV_OVERRIDE = set()
-
 # CONFIG_SCHEMA 中的配置键全部位于 config.ini 的 [Settings] 段
 _SECTION = "Settings"
+
+# config._sources 中环境变量来源的前缀，完整形如 "环境变量 APP_PORT"
+_ENV_SOURCE_PREFIX = "环境变量"
+
+
+def _env_locked_keys():
+    # 扫描配置来源，返回 [Settings] 段被环境变量锁定的键及其环境变量名
+    locked = {}
+    for (section, key), source in getattr(config, "_sources", {}).items():
+        if section != _SECTION or not isinstance(source, str):
+            continue
+        if source.startswith(_ENV_SOURCE_PREFIX):
+            env_name = source[len(_ENV_SOURCE_PREFIX):].strip()
+            locked[key] = env_name or None
+    return locked
 
 
 def _kind_label(rule):
@@ -17,6 +29,8 @@ def _kind_label(rule):
 
 def build_settings_blueprint():
     bp = Blueprint("admin_settings", __name__, url_prefix="/api/admin/settings")
+    # 蓝图构建时绑定环境变量锁定键，运行期保持只读判断一致
+    env_locked = _env_locked_keys()
 
     @bp.get("")
     @admin_required
@@ -33,8 +47,8 @@ def build_settings_blueprint():
                     "description": "",
                     "options": list(getattr(rule, "choices", None) or []),
                     "advanced": False,
-                    "read_only": key in _ENV_OVERRIDE,
-                    "env_name": None,
+                    "read_only": key in env_locked,
+                    "env_name": env_locked.get(key),
                 }
             )
         return jsonify({"items": items})
@@ -56,7 +70,7 @@ def build_settings_blueprint():
             if key not in CONFIG_SCHEMA:
                 details[key] = "未知配置项"
                 continue
-            if key in _ENV_OVERRIDE:
+            if key in env_locked:
                 details[key] = "该配置被环境变量锁定"
         if details:
             return jsonify({"error": "存在无法保存的配置", "details": details}), 400
