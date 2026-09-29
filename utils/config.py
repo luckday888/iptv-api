@@ -142,6 +142,9 @@ CONFIG_SCHEMA = {
     "location": ConfigRule(allow_empty=True),
     "isp": ConfigRule(allow_empty=True),
     "logo_url": ConfigRule(allow_empty=True),
+    "admin_session_days": ConfigRule(kind="integer", minimum=1, maximum=90),
+    "admin_login_rate_limit": ConfigRule(kind="integer", minimum=1, maximum=100),
+    "admin_password": ConfigRule(allow_empty=True),
 }
 
 
@@ -750,6 +753,18 @@ class ConfigManager:
     @property
     def open_auto_disable_source(self):
         return self.config.getboolean("Settings", "open_auto_disable_source", fallback=False)
+
+    @property
+    def admin_session_days(self):
+        return self.config.getint("Settings", "admin_session_days", fallback=7)
+
+    @property
+    def admin_login_rate_limit(self):
+        return self.config.getint("Settings", "admin_login_rate_limit", fallback=5)
+
+    @property
+    def admin_password(self):
+        return self.config.get("Settings", "admin_password", fallback="")
 
     def load(self):
         """
