@@ -139,3 +139,98 @@ def test_get_settings_requires_login():
     app.register_blueprint(build_settings_blueprint())
     res = app.test_client().get("/api/admin/settings")
     assert res.status_code == 401
+
+
+def test_get_settings_excludes_admin_password():
+    # 通用设置接口不回显管理密码
+    res = _client().get("/api/admin/settings")
+    assert res.status_code == 200
+    keys = {item["key"] for item in res.get_json()["items"]}
+    assert "admin_password" not in keys
+
+
+def test_save_admin_password_rejected(monkeypatch):
+    # 夹带 admin_password 的批量保存被拒绝，且不触达 config.set/save
+    from service.web.api import settings as settings_mod
+
+    touched = []
+    monkeypatch.setattr(
+        settings_mod.config,
+        "set",
+        lambda section, key, value: touched.append((section, key, value)),
+    )
+    monkeypatch.setattr(settings_mod.config, "save", lambda: touched.append("save"))
+
+    res = _client().put(
+        "/api/admin/settings",
+        json={"items": [{"key": "admin_password", "value": "hacked"}]},
+    )
+    assert res.status_code == 400
+    assert "修改密码" in res.get_json()["details"]["admin_password"]
+    assert touched == []
+
+
+def test_save_invalid_value_prevalidated(monkeypatch):
+    # 含非法值的混合提交在全量预校验阶段被拦截，config.set 零调用
+    from service.web.api import settings as settings_mod
+
+    calls = []
+    monkeypatch.setattr(
+        settings_mod.config,
+        "set",
+        lambda section, key, value: calls.append((section, key, value)),
+    )
+    monkeypatch.setattr(settings_mod.config, "save", lambda: None)
+
+    res = _client().put(
+        "/api/admin/settings",
+        json={
+            "items": [
+                {"key": "min_speed", "value": "abc"},
+                {"key": "open_update", "value": "False"},
+            ]
+        },
+    )
+    assert res.status_code == 400
+    assert calls == []
+    assert "min_speed" in res.get_json()["details"]
+
+
+def test_save_invalid_value_leaves_memory_untouched():
+    # 预校验拦截时内存中其余键与非法键本身均保持原值
+    from service.web.api import settings as settings_mod
+
+    min_speed_before = settings_mod.config.config.get(_SECTION, "min_speed")
+    open_update_before = settings_mod.config.config.get(_SECTION, "open_update")
+
+    res = _client().put(
+        "/api/admin/settings",
+        json={
+            "items": [
+                {"key": "min_speed", "value": "abc"},
+                {"key": "open_update", "value": "False"},
+            ]
+        },
+    )
+    assert res.status_code == 400
+    assert settings_mod.config.config.get(_SECTION, "min_speed") == min_speed_before
+    assert settings_mod.config.config.get(_SECTION, "open_update") == open_update_before
+
+
+def test_save_failure_rolls_back_memory(monkeypatch):
+    # 预校验通过但落盘抛错时，已写入内存的值全部恢复为原始值
+    from service.web.api import settings as settings_mod
+
+    def _raise():
+        raise RuntimeError("磁盘不可写")
+
+    monkeypatch.setattr(settings_mod.config, "save", _raise)
+
+    original = settings_mod.config.config.get(_SECTION, "open_update")
+    new_value = "False" if original.strip() == "True" else "True"
+    res = _client().put(
+        "/api/admin/settings",
+        json={"items": [{"key": "open_update", "value": new_value}]},
+    )
+    assert res.status_code == 400
+    assert settings_mod.config.config.get(_SECTION, "open_update") == original
